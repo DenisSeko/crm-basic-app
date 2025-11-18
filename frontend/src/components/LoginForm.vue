@@ -17,6 +17,25 @@
       </div>
     </div>
 
+    <!-- Email not verified warning -->
+    <div v-if="emailNotVerified" class="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+      <div class="flex items-start">
+        <span class="text-yellow-600 mr-2 mt-0.5">⚠️</span>
+        <div>
+          <h3 class="font-semibold text-yellow-800">Email nije verifikovan</h3>
+          <p class="text-yellow-700 text-sm mt-1">Provjerite svoj email za verifikacijski link.</p>
+          <button 
+            @click="resendVerificationEmail"
+            :disabled="resendingVerification"
+            class="text-yellow-800 hover:text-yellow-900 text-sm font-medium mt-2 flex items-center gap-1"
+          >
+            <span v-if="resendingVerification" class="animate-spin">⏳</span>
+            {{ resendingVerification ? 'Slanje...' : 'Pošalji ponovno' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <form @submit.prevent="handleLogin" class="space-y-4">
       <!-- Email Field -->
       <div>
@@ -41,21 +60,59 @@
       <!-- Password Field -->
       <div>
         <label for="loginPassword" class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
-        <input 
-          id="loginPassword"
-          name="password"
-          v-model="loginData.password" 
-          type="password" 
-          placeholder="Unesite lozinku"
-          autocomplete="current-password"
-          class="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-          :class="{'border-red-300 ring-1 ring-red-300': errors.password}"
-          required
-          @input="clearError('password')"
-        >
+        <div class="relative">
+          <input 
+            id="loginPassword"
+            name="password"
+            v-model="loginData.password" 
+            :type="showPassword ? 'text' : 'password'" 
+            placeholder="Unesite lozinku"
+            autocomplete="current-password"
+            class="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+            :class="{'border-red-300 ring-1 ring-red-300': errors.password}"
+            required
+            @input="clearError('password')"
+          >
+          <!-- Show/Hide Password Button -->
+          <button
+            type="button"
+            @click="showPassword = !showPassword"
+            class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 transition-colors duration-200"
+            :class="{'mt-1': true}"
+          >
+            <span class="text-lg">
+              {{ showPassword ? '🙈' : '👁️' }}
+            </span>
+          </button>
+        </div>
         <p v-if="errors.password" class="text-red-500 text-xs mt-1 flex items-center">
           <span class="mr-1">⚠️</span>{{ errors.password }}
         </p>
+        
+        <!-- Password strength indicator (opcionalno) -->
+        <div v-if="loginData.password" class="mt-2">
+          <div class="flex items-center justify-between text-xs text-gray-500">
+            <span>Jačina lozinke:</span>
+            <span :class="{
+              'text-green-600 font-medium': passwordStrength >= 3,
+              'text-yellow-600': passwordStrength === 2,
+              'text-red-600': passwordStrength <= 1
+            }">
+              {{ getPasswordStrengthText() }}
+            </span>
+          </div>
+          <div class="mt-1 w-full bg-gray-200 rounded-full h-1.5">
+            <div 
+              class="h-1.5 rounded-full transition-all duration-300"
+              :class="{
+                'bg-red-500': passwordStrength <= 1,
+                'bg-yellow-500': passwordStrength === 2,
+                'bg-green-500': passwordStrength >= 3
+              }"
+              :style="{ width: `${(passwordStrength / 4) * 100}%` }"
+            ></div>
+          </div>
+        </div>
       </div>
       
       <!-- Submit Button -->
@@ -140,6 +197,9 @@ const emit = defineEmits(['login', 'show-register', 'go-home'])
 const isLoggingIn = ref(false)
 const message = ref('')
 const messageType = ref('')
+const emailNotVerified = ref(false)
+const resendingVerification = ref(false)
+const showPassword = ref(false) // 👈 NOVO: kontrolira prikaz lozinke
 const errors = reactive({
   email: '',
   password: ''
@@ -185,6 +245,31 @@ const isFormValid = computed(() => {
          loginData.password.length >= 1
 })
 
+// 👈 NOVO: Password strength calculator
+const passwordStrength = computed(() => {
+  const password = loginData.password
+  if (!password) return 0
+  
+  let strength = 0
+  
+  // Length check
+  if (password.length >= 8) strength++
+  
+  // Contains lowercase
+  if (/[a-z]/.test(password)) strength++
+  
+  // Contains uppercase
+  if (/[A-Z]/.test(password)) strength++
+  
+  // Contains numbers
+  if (/\d/.test(password)) strength++
+  
+  // Contains special characters
+  if (/[!@#$%^&*(),.?":{}|<>]/.test(password)) strength++
+  
+  return Math.min(strength, 4) // Max 4 for the progress bar
+})
+
 // Methods
 const showMessage = (text, type) => {
   message.value = text
@@ -198,6 +283,19 @@ const showMessage = (text, type) => {
 const clearError = (field) => {
   if (errors[field]) {
     errors[field] = ''
+  }
+}
+
+// 👈 NOVO: Password strength text
+const getPasswordStrengthText = () => {
+  const strength = passwordStrength.value
+  switch (strength) {
+    case 0: return 'Nema lozinku'
+    case 1: return 'Slaba'
+    case 2: return 'Srednja'
+    case 3: return 'Jaka'
+    case 4: return 'Vrlo jaka'
+    default: return 'Nepoznato'
   }
 }
 
@@ -234,6 +332,22 @@ const validateForm = () => {
   return isValid
 }
 
+const resendVerificationEmail = async () => {
+  if (resendingVerification.value) return
+  
+  try {
+    resendingVerification.value = true
+    await api.post('/auth/resend-verification', { email: loginData.email })
+    showMessage('Verifikacijski email je ponovno poslan! Provjerite svoj inbox.', 'success')
+    emailNotVerified.value = false
+  } catch (error) {
+    console.error('Greška pri slanju verifikacijskog emaila:', error)
+    showMessage('Greška pri slanju verifikacijskog emaila: ' + (error.response?.data?.error || error.message), 'error')
+  } finally {
+    resendingVerification.value = false
+  }
+}
+
 // Auto-populate iz URL query parametara
 const autoPopulateFromURL = () => {
   if (route.query.email && route.query.password) {
@@ -264,6 +378,7 @@ const handleLogin = async () => {
 
   isLoggingIn.value = true
   message.value = ''
+  emailNotVerified.value = false
 
   try {
     console.log('🔐 LoginForm: Pokrećem prijavu za:', loginData.email)
@@ -271,6 +386,13 @@ const handleLogin = async () => {
     const response = await api.post('/auth/login', loginData)
     
     const { token, user } = response.data
+    
+    // Provjeri je li email verifikovan
+    if (!user.email_verified) {
+      emailNotVerified.value = true
+      showMessage('Molimo verifikujte svoj email prije prijave.', 'error')
+      return
+    }
     
     // DEBUG: Provjera prije spremanja
     console.log('📦 LoginForm: Podaci za spremanje:', { token, user })
@@ -342,6 +464,8 @@ defineExpose({
     loginData.password = ''
     message.value = ''
     messageType.value = ''
+    emailNotVerified.value = false
+    showPassword.value = false // 👈 Reset show password
     Object.keys(errors).forEach(key => errors[key] = '')
   },
   
@@ -376,5 +500,20 @@ button:focus {
   transition-property: color, background-color, border-color, transform, box-shadow;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 200ms;
+}
+
+/* Custom styles za password toggle button */
+.relative button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+}
+
+.relative button:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 </style>

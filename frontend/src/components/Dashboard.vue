@@ -1,74 +1,86 @@
 <template>
-  <div class="max-w-6xl mx-auto p-6">
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-      <div class="bg-white p-6 rounded-lg shadow-sm border">
-        <h3 class="text-lg font-semibold text-gray-700">Ukupno klijenata</h3>
-        <p class="text-3xl font-bold text-blue-600">{{ stats.clients }}</p>
+  <div class="max-w-6xl mx-auto p-4 sm:p-6">
+    <!-- Statistics Grid - Improved for mobile -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div class="bg-white p-4 sm:p-6 rounded-lg shadow-sm border">
+        <h3 class="text-base sm:text-lg font-semibold text-gray-700">Ukupno klijenata</h3>
+        <p class="text-2xl sm:text-3xl font-bold text-blue-600">{{ stats.clients }}</p>
         <div class="text-xs text-gray-500 mt-1 space-y-1">
-          <div>📝 S bilješkama: {{ getClientsWithNotes() }}</div>
-          <div>📄 Bez bilješki: {{ getClientsWithoutNotes() }}</div>
+          <div class="flex items-center gap-1">
+            <span>📝</span>
+            <span>S bilješkama: {{ getClientsWithNotes() }}</span>
+          </div>
+          <div class="flex items-center gap-1">
+            <span>📄</span>
+            <span>Bez bilješki: {{ getClientsWithoutNotes() }}</span>
+          </div>
         </div>
       </div>
-      <div class="bg-white p-6 rounded-lg shadow-sm border">
-        <h3 class="text-lg font-semibold text-gray-700">Ukupno bilješki</h3>
-        <p class="text-3xl font-bold text-green-600">{{ stats.totalNotes }}</p>
+      
+      <div class="bg-white p-4 sm:p-6 rounded-lg shadow-sm border">
+        <h3 class="text-base sm:text-lg font-semibold text-gray-700">Ukupno bilješki</h3>
+        <p class="text-2xl sm:text-3xl font-bold text-green-600">{{ stats.totalNotes }}</p>
         <p class="text-xs text-gray-500 mt-1">
           Prosjek: {{ getAverageNotes() }} po klijentu
         </p>
       </div>
-      <div class="bg-white p-6 rounded-lg shadow-sm border">
-        <h3 class="text-lg font-semibold text-gray-700">Zadnja bilješka</h3>
-        <p class="text-sm text-gray-600 mt-1 truncate" :title="stats.lastNote">
+      
+      <div class="bg-white p-4 sm:p-6 rounded-lg shadow-sm border">
+        <h3 class="text-base sm:text-lg font-semibold text-gray-700">Zadnja bilješka</h3>
+        <p class="text-sm text-gray-600 mt-1 line-clamp-2" :title="stats.lastNote">
           {{ stats.lastNote }}
         </p>
       </div>
-      <div class="bg-white p-6 rounded-lg shadow-sm border">
-        <h3 class="text-lg font-semibold text-gray-700">Akcije</h3>
+      
+      <div class="bg-white p-4 sm:p-6 rounded-lg shadow-sm border">
+        <h3 class="text-base sm:text-lg font-semibold text-gray-700">Akcije</h3>
         <button @click="showNewClient = true"
-          class="mt-2 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 w-full">
+          class="mt-2 bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 w-full text-sm sm:text-base">
           + Novi klijent
         </button>
       </div>
     </div>
 
-    <div v-if="showNewClient" class="bg-white p-6 rounded-lg shadow-sm border mb-6">
+    <!-- New Client Form -->
+    <div v-if="showNewClient" class="bg-white p-4 sm:p-6 rounded-lg shadow-sm border mb-6">
       <h3 class="text-lg font-semibold mb-4">Novi klijent</h3>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Ime klijenta *</label>
           <input v-model="newClient.name" placeholder="Unesite ime klijenta"
-            class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full" />
+            class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm sm:text-base" />
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Email *</label>
           <input v-model="newClient.email" placeholder="email@primjer.com"
-            class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full" />
+            class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm sm:text-base" />
         </div>
         <div class="md:col-span-2">
           <label class="block text-sm font-medium text-gray-700 mb-1">Tvrtka</label>
           <input v-model="newClient.company" placeholder="Naziv tvrtke (opcionalno)"
-            class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full" />
+            class="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm sm:text-base" />
         </div>
       </div>
-      <div class="flex gap-2 mt-4">
+      <div class="flex flex-col sm:flex-row gap-2 mt-4">
         <button @click="createClient"
-          class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 flex items-center gap-2"
+          class="bg-blue-600 text-white px-4 py-3 rounded-md hover:bg-blue-700 flex items-center justify-center gap-2 text-sm sm:text-base"
           :disabled="!newClient.name || !newClient.email || creatingClient">
           <span v-if="creatingClient" class="animate-spin">⏳</span>
           <span v-else>💾</span>
           {{ creatingClient ? 'Spremanje...' : 'Spremi' }}
         </button>
         <button @click="cancelNewClient"
-          class="bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600 flex items-center gap-2">
+          class="bg-gray-500 text-white px-4 py-3 rounded-md hover:bg-gray-600 flex items-center justify-center gap-2 text-sm sm:text-base">
           <span>❌</span>
           Otkaži
         </button>
       </div>
     </div>
 
+    <!-- Clients Section -->
     <div class="bg-white rounded-lg shadow-sm border">
-      <div class="p-6 border-b">
-        <div class="flex justify-between items-center">
+      <div class="p-4 sm:p-6 border-b">
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <h3 class="text-lg font-semibold">Klijenti</h3>
           <div class="text-sm text-gray-600 space-y-1">
             <div>
@@ -81,6 +93,7 @@
         </div>
       </div>
 
+      <!-- Loading State -->
       <div v-if="loading" class="p-6 text-center text-gray-500">
         <div class="flex justify-center items-center gap-2">
           <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
@@ -88,43 +101,45 @@
         </div>
       </div>
 
+      <!-- Empty State -->
       <div v-else-if="clients.length === 0" class="p-6 text-center text-gray-500">
         <div class="max-w-md mx-auto">
           <div class="text-4xl mb-4">📊</div>
           <h3 class="text-lg font-semibold mb-2">Nema klijenata</h3>
           <p class="text-sm mb-4">Dodajte prvog klijenta kako biste počeli koristiti CRM sustav.</p>
-          <button @click="showNewClient = true" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700">
+          <button @click="showNewClient = true" class="bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 w-full sm:w-auto">
             + Dodaj prvog klijenta
           </button>
         </div>
       </div>
 
+      <!-- Clients List -->
       <ul v-else class="divide-y">
-        <li v-for="client in clients" :key="client.id" class="p-6 hover:bg-gray-50 transition-colors duration-200">
-          <div class="flex justify-between items-start">
-            <div class="flex-1">
-              <div class="flex items-center gap-3 mb-2">
-                <h4 class="font-semibold text-lg text-gray-800">{{ client.name }}</h4>
+        <li v-for="client in clients" :key="client.id" class="p-4 sm:p-6 hover:bg-gray-50 transition-colors duration-200">
+          <div class="flex flex-col sm:flex-row justify-between items-start gap-4">
+            <div class="flex-1 min-w-0">
+              <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-2">
+                <h4 class="font-semibold text-lg text-gray-800 truncate">{{ client.name }}</h4>
                 
-                <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full">
+                <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full self-start sm:self-center">
                   {{ getNoteCountDisplay(client.id) }}
                 </span>
               </div>
-              <p class="text-gray-600 flex items-center gap-2">
+              <p class="text-gray-600 flex items-center gap-2 text-sm sm:text-base">
                 <span>📧</span>
-                {{ client.email }}
+                <span class="break-all">{{ client.email }}</span>
               </p>
               <p class="text-sm text-gray-500 flex items-center gap-2 mt-1">
                 <span>🏢</span>
-                {{ client.company || 'Nema podataka o tvrtki' }}
+                <span class="break-words">{{ client.company || 'Nema podataka o tvrtki' }}</span>
               </p>
               <p class="text-xs text-gray-400 mt-2">
                 Kreiran: {{ new Date(client.created_at).toLocaleDateString('hr-HR') }}
               </p>
             </div>
-            <div class="flex gap-2">
+            <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
               <button @click="initLoaderAndToggleNotes(client.id)"
-                class="text-blue-600 hover:text-blue-800 px-3 py-2 rounded border border-blue-200 hover:bg-blue-50 transition-colors duration-200 flex items-center gap-2"
+                class="text-blue-600 hover:text-blue-800 px-3 py-3 sm:py-2 rounded border border-blue-200 hover:bg-blue-50 transition-colors duration-200 flex items-center justify-center gap-2 text-sm"
                 :title="notesOpen[client.id] ? 'Sakrij bilješke' : 'Prikaži bilješke'"
                 :disabled="loadingNotes[client.id]">
                 <span>{{ notesOpen[client.id] ? '📕' : '📘' }}</span>
@@ -140,7 +155,7 @@
                 </template>
               </button>
               <button @click="deleteClient(client.id)"
-                class="text-red-600 hover:text-red-800 px-3 py-2 rounded border border-red-200 hover:bg-red-50 transition-colors duration-200 flex items-center gap-2"
+                class="text-red-600 hover:text-red-800 px-3 py-3 sm:py-2 rounded border border-red-200 hover:bg-red-50 transition-colors duration-200 flex items-center justify-center gap-2 text-sm"
                 title="Obriši klijenta"
                 :disabled="deletingClientId === client.id">
                 <span v-if="deletingClientId === client.id" class="animate-spin">⏳</span>
@@ -150,7 +165,8 @@
             </div>
           </div>
 
-          <div v-if="notesOpen[client.id]" class="mt-4 ml-4 p-4 bg-gray-50 rounded-lg border">
+          <!-- Notes Section -->
+          <div v-if="notesOpen[client.id]" class="mt-4 ml-0 sm:ml-4 p-4 bg-gray-50 rounded-lg border">
             <h5 class="font-semibold mb-3 flex items-center gap-2 text-gray-700">
               <span>📝</span>
               Bilješke za {{ client.name }}
@@ -177,14 +193,14 @@
               <li v-for="note in clientNotes[client.id]" :key="note.id"
                 class="bg-white p-4 rounded border hover:shadow-sm transition-shadow duration-200">
                 <div class="flex justify-between items-start gap-3">
-                  <div class="flex-1">
-                    <p class="text-gray-800">{{ note.content }}</p>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-gray-800 break-words">{{ note.content }}</p>
                     <span class="text-xs text-gray-400 block mt-2">
                       📅 {{ new Date(note.created_at).toLocaleString('hr-HR') }}
                     </span>
                   </div>
                   <button @click="deleteNote(note.id, client.id)"
-                    class="text-red-500 hover:text-red-700 transition-colors duration-200 flex-shrink-0 p-1 rounded hover:bg-red-50"
+                    class="text-red-500 hover:text-red-700 transition-colors duration-200 flex-shrink-0 p-2 rounded hover:bg-red-50"
                     title="Obriši bilješku" :disabled="deletingNoteId === note.id">
                     <span v-if="deletingNoteId === note.id" class="animate-spin">⏳</span>
                     <span v-else>🗑️</span>
@@ -193,13 +209,13 @@
               </li>
             </ul>
 
-            <div v-if="!loadingNotes[client.id]" class="flex gap-2">
+            <div v-if="!loadingNotes[client.id]" class="flex flex-col sm:flex-row gap-2">
               <input v-model="newNote[client.id]" @keyup.enter="addNote(client.id)"
                 placeholder="Unesite novu bilješku..."
-                class="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="flex-1 border border-gray-300 rounded-md px-3 py-3 sm:py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 :disabled="addingNoteClientId === client.id" />
               <button @click="addNote(client.id)"
-                class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 text-sm flex items-center gap-2 transition-colors duration-200"
+                class="bg-green-600 text-white px-4 py-3 sm:py-2 rounded-md hover:bg-green-700 text-sm flex items-center justify-center gap-2 transition-colors duration-200"
                 :disabled="!newNote[client.id] || addingNoteClientId === client.id">
                 <span v-if="addingNoteClientId === client.id" class="animate-spin">⏳</span>
                 <span v-else>➕</span>
@@ -593,3 +609,28 @@ onMounted(() => {
   loadClients()
 })
 </script>
+
+<style scoped>
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Poboljšanja za mobilne uređaje */
+@media (max-width: 640px) {
+  .min-w-0 {
+    min-width: 0;
+  }
+  
+  .break-all {
+    word-break: break-all;
+  }
+  
+  .break-words {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+}
+</style>

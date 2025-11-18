@@ -15,6 +15,7 @@
       @show-login="switchToLogin"
       @go-home="goToHome"
       @registered="handleRegistered"
+      ref="registerRef"
     />
   </div>
 </template>
@@ -43,6 +44,7 @@ const emit = defineEmits(['success', 'go-home'])
 const currentView = ref(props.initialView)
 const isLoading = ref(false)
 const loginRef = ref(null)
+const registerRef = ref(null)
 
 console.log('🚀 AuthManager mounted sa initialView:', props.initialView)
 console.log('📍 Trenutna ruta:', route.path)
@@ -98,28 +100,29 @@ const handleLogin = async (loginData) => {
 const handleRegistered = async (userData) => {
   console.log('✅ AuthManager: User registered:', userData)
   
-  // Dodaj mali delay prije prebacivanja na login
+  // NE prebacuj na login! Ostani na registraciji dok se ne preusmjeri na verify-email
+  // Registration komponenta će se sama preusmjeriti na verify-email
+  console.log('🔄 AuthManager: Ostajem na register viewu dok se ne preusmjeri na verify-email')
+  
+  // Možemo dodati loading state ako je potrebno
   isLoading.value = true
-  try {
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    switchToLogin()
-  } finally {
+  setTimeout(() => {
     isLoading.value = false
-  }
+  }, 1000)
 }
 
-// Force view based on route - NUCLEAR OPTION za sigurnost
+// Force view based on route
 const forceViewBasedOnRoute = () => {
   console.log('🔧 Force view check:')
   console.log('   - Route path:', route.path)
   console.log('   - Current view:', currentView.value)
   
-  if (route.path === '/register') {
+  if (route.path === '/register' || route.name === 'Register') {
     if (currentView.value !== 'register') {
       console.log('💥 FORCE: Setting to register view')
       currentView.value = 'register'
     }
-  } else if (route.path === '/login') {
+  } else if (route.path === '/login' || route.name === 'Login') {
     if (currentView.value !== 'login') {
       console.log('💥 FORCE: Setting to login view')
       currentView.value = 'login'

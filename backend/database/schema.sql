@@ -11,6 +11,8 @@ CREATE TABLE users (
     first_name VARCHAR(50),
     last_name VARCHAR(50),
     role ENUM('admin', 'user') DEFAULT 'user',
+    email_verified BOOLEAN DEFAULT FALSE,
+    verification_token VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
@@ -55,11 +57,12 @@ CREATE TABLE activities (
 );
 
 -- Ubacivanje demo korisnika (lozinka je "password123" hashana)
-INSERT INTO users (username, email, password_hash, first_name, last_name, role) VALUES
-('admin', 'admin@crm.com', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin', 'Korisnik', 'admin'),
-('ivan.horvat', 'ivan.horvat@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ivan', 'Horvat', 'user'),
-('ana.kovač', 'ana.kovac@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ana', 'Kovač', 'user'),
-('marko.petrov', 'marko.petrov@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Marko', 'Petrov', 'user');
+-- Demo korisnici su automatski verificirani
+INSERT INTO users (username, email, password_hash, first_name, last_name, role, email_verified) VALUES
+('admin', 'admin@crm.com', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin', 'Korisnik', 'admin', TRUE),
+('ivan.horvat', 'ivan.horvat@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ivan', 'Horvat', 'user', TRUE),
+('ana.kovač', 'ana.kovac@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ana', 'Kovač', 'user', TRUE),
+('marko.petrov', 'marko.petrov@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Marko', 'Petrov', 'user', TRUE);
 
 -- Ubacivanje demo klijenata
 INSERT INTO clients (name, email, company, phone, address, created_by) VALUES
@@ -112,6 +115,8 @@ CREATE INDEX idx_notes_created_at ON notes(created_at);
 CREATE INDEX idx_activities_client_id ON activities(client_id);
 CREATE INDEX idx_activities_date ON activities(activity_date);
 CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_verification_token ON users(verification_token);
+CREATE INDEX idx_users_email_verified ON users(email_verified);
 
 -- Prikaz broja unosa po tablicama (za provjeru)
 SELECT 
@@ -122,3 +127,12 @@ UNION ALL
 SELECT 'Notes', COUNT(*) FROM notes
 UNION ALL
 SELECT 'Activities', COUNT(*) FROM activities;
+
+-- Dodatna provjera email verifikacije statusa
+SELECT 
+    'Email Verification Status' as info,
+    COUNT(*) as total_users,
+    SUM(CASE WHEN email_verified = TRUE THEN 1 ELSE 0 END) as verified_users,
+    SUM(CASE WHEN email_verified = FALSE THEN 1 ELSE 0 END) as unverified_users,
+    SUM(CASE WHEN verification_token IS NOT NULL THEN 1 ELSE 0 END) as users_with_pending_verification
+FROM users;

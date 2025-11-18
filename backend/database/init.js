@@ -31,6 +31,8 @@ async function initializeDatabase() {
         first_name VARCHAR(50),
         last_name VARCHAR(50),
         role VARCHAR(20) DEFAULT 'user',
+        email_verified BOOLEAN DEFAULT FALSE,
+        verification_token VARCHAR(255),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -85,7 +87,8 @@ async function initializeDatabase() {
         password: 'password123',
         firstName: 'Admin',
         lastName: 'Korisnik',
-        role: 'admin'
+        role: 'admin',
+        emailVerified: true
       },
       {
         username: 'ivan.horvat',
@@ -93,7 +96,8 @@ async function initializeDatabase() {
         password: 'password123',
         firstName: 'Ivan',
         lastName: 'Horvat',
-        role: 'user'
+        role: 'user',
+        emailVerified: true
       },
       {
         username: 'ana.kovac',
@@ -101,7 +105,8 @@ async function initializeDatabase() {
         password: 'password123',
         firstName: 'Ana',
         lastName: 'Kovač',
-        role: 'user'
+        role: 'user',
+        emailVerified: true
       },
       {
         username: 'marko.petrov',
@@ -109,7 +114,8 @@ async function initializeDatabase() {
         password: 'password123',
         firstName: 'Marko',
         lastName: 'Petrov',
-        role: 'user'
+        role: 'user',
+        emailVerified: true
       }
     ];
 
@@ -117,16 +123,18 @@ async function initializeDatabase() {
       const passwordHash = await bcrypt.hash(user.password, 10);
       
       await dbClient.query(`
-        INSERT INTO users (username, email, password_hash, first_name, last_name, role) 
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO users (username, email, password_hash, first_name, last_name, role, email_verified) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (email) DO UPDATE SET
           username = EXCLUDED.username,
           password_hash = EXCLUDED.password_hash,
           first_name = EXCLUDED.first_name,
           last_name = EXCLUDED.last_name,
           role = EXCLUDED.role,
+          email_verified = EXCLUDED.email_verified,
+          verification_token = NULL,
           updated_at = CURRENT_TIMESTAMP
-      `, [user.username, user.email, passwordHash, user.firstName, user.lastName, user.role]);
+      `, [user.username, user.email, passwordHash, user.firstName, user.lastName, user.role, user.emailVerified]);
     }
 
     console.log('✅ Demo users inserted/updated');
@@ -298,6 +306,8 @@ async function initializeDatabase() {
     await dbClient.query('CREATE INDEX IF NOT EXISTS idx_activities_client_id ON activities(client_id)');
     await dbClient.query('CREATE INDEX IF NOT EXISTS idx_activities_date ON activities(activity_date)');
     await dbClient.query('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)');
+    await dbClient.query('CREATE INDEX IF NOT EXISTS idx_users_verification_token ON users(verification_token)');
+    await dbClient.query('CREATE INDEX IF NOT EXISTS idx_users_email_verified ON users(email_verified)');
 
     console.log('✅ Indexes created');
 
@@ -307,18 +317,30 @@ async function initializeDatabase() {
     const notesCount = await dbClient.query('SELECT COUNT(*) FROM notes');
     const activitiesCount = await dbClient.query('SELECT COUNT(*) FROM activities');
 
+    // Provjera email verifikacije statusa
+    const verificationStatus = await dbClient.query(`
+      SELECT 
+        COUNT(*) as total_users,
+        SUM(CASE WHEN email_verified = true THEN 1 ELSE 0 END) as verified_users,
+        SUM(CASE WHEN email_verified = false THEN 1 ELSE 0 END) as unverified_users
+      FROM users
+    `);
+
     console.log('\n📈 Database Statistics:');
     console.log(`👥 Users: ${usersCount.rows[0].count}`);
+    console.log(`   ✅ Verified: ${verificationStatus.rows[0].verified_users}`);
+    console.log(`   ⏳ Unverified: ${verificationStatus.rows[0].unverified_users}`);
     console.log(`🏢 Clients: ${clientsCount.rows[0].count}`);
     console.log(`📝 Notes: ${notesCount.rows[0].count}`);
     console.log(`📅 Activities: ${activitiesCount.rows[0].count}`);
 
     console.log('\n🎉 Database initialization completed successfully!');
-    console.log('\n🔐 Demo login credentials:');
+    console.log('\n🔐 Demo login credentials (all verified):');
     console.log('   admin@crm.com / password123 (admin)');
     console.log('   ivan.horvat@primjer.hr / password123 (user)');
     console.log('   ana.kovac@primjer.hr / password123 (user)');
     console.log('   marko.petrov@primjer.hr / password123 (user)');
+    console.log('\n📧 New users will receive verification emails via MailCatcher');
 
   } catch (error) {
     console.error('💥 Error during database initialization:', error);
