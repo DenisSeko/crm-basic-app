@@ -5,19 +5,17 @@ import App from './App.vue'
 import './style.css'
 import { authHelper } from './services/api'
 
-// Import komponenti
+// ⭐⭐⭐ SAMO POTREBNE KOMPONENTE ZA ACTIVATION FLOW ⭐⭐⭐
 import HomePage from './components/HomePage.vue'
 import AuthManager from './components/AuthManager.vue'
 import Dashboard from './components/Dashboard.vue'
-import VerifyEmail from './components/VerifyEmail.vue'
-import EmailVerified from './components/EmailVerified.vue'
 import Activation from './components/Activation.vue'
 
 // Kreiraj router instance
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    // ⭐⭐⭐ ACTIVATION ROUTE FIRST - PRIORITET ⭐⭐⭐
+    // ⭐⭐⭐ ACTIVATION ROUTE - PRIORITET ⭐⭐⭐
     {
       path: '/activate',
       name: 'Activation',
@@ -63,25 +61,47 @@ const router = createRouter({
         title: 'Dashboard - CRM Sustav'
       }
     },
+    
+    // ⭐⭐⭐ ADMIN RUTE ⭐⭐⭐
     {
-      path: '/verify-email',
-      name: 'VerifyEmail',
-      component: VerifyEmail,
+      path: '/admin',
+      name: 'Admin',
+      component: () => import('./components/admin/AdminLayout.vue'),
       meta: { 
-        requiresGuest: true,
-        title: 'Verifikacija Emaila - CRM Sustav'
-      }
+        requiresAuth: true,
+        requiresAdmin: true,
+        requiresVerified: true,
+        title: 'Admin Panel - CRM Sustav'
+      },
+      children: [
+        {
+          path: '',
+          name: 'AdminDashboard',
+          component: () => import('./components/admin/AdminDashboard.vue'),
+          meta: { title: 'Admin Dashboard' }
+        },
+        {
+          path: 'users',
+          name: 'UserManagement',
+          component: () => import('./components/admin/UserManagement.vue'),
+          meta: { title: 'Upravljanje Korisnicima' }
+        },
+        {
+          path: 'users/create',
+          name: 'CreateUser',
+          component: () => import('./components/admin/CreateUserForm.vue'),
+          meta: { title: 'Dodaj Novog Korisnika' }
+        },
+        {
+          path: 'users/:id/edit',
+          name: 'EditUser',
+          component: () => import('./components/admin/EditUserForm.vue'),
+          meta: { title: 'Uredi Korisnika' }
+        }
+      ]
     },
-    {
-      path: '/email-verified',
-      name: 'EmailVerified',
-      component: EmailVerified,
-      meta: { 
-        requiresGuest: true,
-        title: 'Email Verificiran - CRM Sustav'
-      }
-    },
-    // ⭐⭐⭐ WILDCARD ROUTE MORA BITI AKTIVNA ⭐⭐⭐
+    
+    // ⭐⭐⭐ WILDCARD ROUTE ⭐⭐⭐
     {
       path: '/:pathMatch(.*)*',
       redirect: '/'
@@ -91,62 +111,72 @@ const router = createRouter({
 
 // Globalni navigation guard
 router.beforeEach((to, from, next) => {
-  console.log('🛡️ Route Guard aktiviran:')
-  console.log('   - Od:', from.name || from.path)
-  console.log('   - Prema:', to.name || to.path)
-  console.log('   - Query:', to.query)
-  
-  // ⭐⭐⭐ FIX 1: AUTO-REDIRECT TO ACTIVATION IF TOKEN AND EMAIL ARE PRESENT ⭐⭐⭐
-  if (to.path === '/' && to.query.token && to.query.email) {
-    console.log('🔗 Aktivacijski link detektiran na HomePage, preusmjeravam na /activate')
-    console.log('   - Token:', to.query.token)
-    console.log('   - Email:', to.query.email)
-    
-    next({
-      path: '/activate',
-      query: to.query
-    })
-    return
-  }
-
-  // ⭐⭐⭐ FIX 2: HANDLE ANY ROUTE WITH ACTIVATION PARAMS ⭐⭐⭐
-  if (to.query.token && to.query.email && to.path !== '/activate') {
-    console.log('🔗 Activation parametri detektirani na rutu:', to.path)
-    console.log('   - Preusmjeravam na /activate')
-    console.log('   - Token:', to.query.token)
-    console.log('   - Email:', to.query.email)
-    
-    next({
-      path: '/activate',
-      query: to.query
-    })
-    return
-  }
+  console.log('🛡️ Route Guard:', to.name || to.path)
   
   const isAuthenticated = authHelper.isAuthenticated()
   const user = authHelper.getUser()
   const isEmailVerified = user?.email_verified
-  
-  console.log('🔐 Auth Status:', { 
-    isAuthenticated, 
-    isEmailVerified,
-    user: user ? { id: user.id, email: user.email } : 'Nema korisnika'
-  })
+  const isAdmin = user?.role === 'admin'
   
   // Postavi naslov stranice
   if (to.meta.title) {
     document.title = to.meta.title
   }
 
-  // RUTE KOJE ZAHTIJEVAJU AUTENTIKACIJU
+  // ⭐⭐⭐ AUTO-REDIRECT ZA SVE ACTIVATION LINKOVE ⭐⭐⭐
+  if (to.query.token && to.query.email && to.path !== '/activate') {
+    console.log('🔗 Activation link detektiran, preusmjeravam na /activate')
+    next({
+      path: '/activate',
+      query: to.query
+    })
+    return
+  }
+  
+  // ⭐⭐⭐ ADMIN RUTE PROVJERA ⭐⭐⭐
+  if (to.meta.requiresAdmin) {
+    if (!isAuthenticated) {
+      console.log('🚫 Admin pristup odbijen: Korisnik nije prijavljen')
+      localStorage.setItem('intended_url', to.fullPath)
+      next({ 
+        name: 'Login',
+        query: { 
+          redirect: to.fullPath,
+          message: 'Morate biti prijavljeni za pristup admin panelu'
+        }
+      })
+      return
+    }
+    
+    if (!isAdmin) {
+      console.log('🚫 Admin pristup odbijen: Korisnik nije admin')
+      next({ 
+        name: 'Dashboard',
+        query: { 
+          message: 'Nemate ovlaštenja za pristup admin panelu'
+        }
+      })
+      return
+    }
+    
+    if (to.meta.requiresVerified && !isEmailVerified) {
+      console.log('📧 Admin pristup odbijen: Račun nije aktiviran')
+      next({ 
+        path: '/activate',
+        query: { 
+          email: user?.email,
+          message: 'Morate aktivirati račun prije pristupa admin panelu'
+        }
+      })
+      return
+    }
+  }
+
+  // ⭐⭐⭐ AUTH RUTE PROVJERA ⭐⭐⭐
   if (to.meta.requiresAuth) {
     if (!isAuthenticated) {
       console.log('🚫 Pristup odbijen: Korisnik nije prijavljen')
-      console.log('📍 Preusmjeravam na login s redirect parametrom:', to.fullPath)
-      
-      // Spremi intended URL za nakon prijave
       localStorage.setItem('intended_url', to.fullPath)
-      
       next({ 
         name: 'Login',
         query: { 
@@ -157,138 +187,85 @@ router.beforeEach((to, from, next) => {
       return
     }
     
-    // Provjeri je li email verifikovan ako ruta to zahtijeva
     if (to.meta.requiresVerified && !isEmailVerified) {
-      console.log('📧 Pristup odbijen: Email nije verifikovan')
-      console.log('📍 Preusmjeravam na verify-email')
-      
+      console.log('📧 Pristup odbijen: Račun nije aktiviran')
       const userEmail = user?.email || localStorage.getItem('pending_verification_email')
       next({ 
-        name: 'VerifyEmail', 
+        path: '/activate',
         query: { 
           email: userEmail,
-          message: 'Morate verifikovati email prije pristupa dashboardu'
+          message: 'Morate aktivirati račun prije pristupa'
         }
       })
       return
     }
   }
   
-  // RUTE KOJE ZAHTIJEVAJU DA KORISNIK NIJE PRIJAVLJEN (GUEST)
+  // ⭐⭐⭐ GUEST RUTE PROVJERA ⭐⭐⭐
   if (to.meta.requiresGuest && isAuthenticated) {
     console.log('🔐 Korisnik je već prijavljen, preusmjeravam...')
     
     if (isEmailVerified) {
-      // Ako je email verifikovan, idi na dashboard
       const intendedUrl = localStorage.getItem('intended_url')
       if (intendedUrl && intendedUrl !== '/dashboard') {
-        console.log('📍 Preusmjeravam na intended URL:', intendedUrl)
         localStorage.removeItem('intended_url')
         next(intendedUrl)
       } else {
-        console.log('📍 Preusmjeravam na dashboard')
         next('/dashboard')
       }
     } else {
-      // Ako email nije verifikovan, idi na verify-email
       const userEmail = user?.email || localStorage.getItem('pending_verification_email')
-      console.log('📧 Preusmjeravam na verify-email jer email nije verifikovan')
       next({ 
-        name: 'VerifyEmail', 
+        path: '/activate',
         query: { email: userEmail }
       })
     }
     return
   }
   
-  // SPECIFIČNE RUTE HANDLING
-  
-  // Ako je korisnik na verify-email ali je već verifikovan
-  if (to.name === 'VerifyEmail' && isAuthenticated && isEmailVerified) {
-    console.log('✅ Email je već verifikovan, preusmjeravam na dashboard')
-    next('/dashboard')
-    return
-  }
-  
-  // Ako je korisnik na login/register ali je već prijavljen i verifikovan
+  // ⭐⭐⭐ SPECIFIČNE RUTE HANDLING ⭐⭐⭐
   if ((to.name === 'Login' || to.name === 'Register') && isAuthenticated && isEmailVerified) {
-    console.log('🔐 Korisnik je već prijavljen i verifikovan, preusmjeravam na dashboard')
+    console.log('🔐 Korisnik je već prijavljen i aktiviran, preusmjeravam na dashboard')
     next('/dashboard')
     return
   }
   
-  // Ako je korisnik na email-verified stranici ali nije prijavljen
-  if (to.name === 'EmailVerified' && !isAuthenticated) {
-    console.log('🔐 Korisnik nije prijavljen, preusmjeravam na login')
-    next('/login')
-    return
-  }
-  
-  // Ako je korisnik na activation stranici ali je već prijavljen
-  if (to.name === 'Activation' && isAuthenticated) {
-    console.log('🔐 Korisnik je već prijavljen, preusmjeravam na dashboard')
+  if (to.name === 'Activation' && isAuthenticated && isEmailVerified) {
+    console.log('✅ Račun je već aktiviran, preusmjeravam na dashboard')
     next('/dashboard')
     return
   }
   
-  // SVE JE U REDU - NASTAVI
+  // ✅ SVE JE U REDU - NASTAVI
   console.log('✅ Route guard prošao, nastavljam na:', to.name)
   next()
 })
 
-// Router error handler
-router.onError((error) => {
-  console.error('💥 Router Error:', error)
-})
-
 // Kreiraj Vue aplikaciju
 const app = createApp(App)
-
-// Registriraj globalne komponente ako su potrebne
-// app.component('ComponentName', Component)
-
-// Koristi plugin-e
 app.use(createPinia())
 app.use(router)
-
-// Globalne konfiguracije
-app.config.globalProperties.$filters = {
-  formatDate(date) {
-    return new Date(date).toLocaleDateString('hr-HR')
-  },
-  formatDateTime(date) {
-    return new Date(date).toLocaleString('hr-HR')
-  }
-}
-
-// Mount aplikaciju
 app.mount('#app')
 
-// Console log za debugging
 console.log('🚀 Vue CRM aplikacija pokrenuta!')
-console.log('📍 Router konfiguriran sa sljedećim rutama:')
-router.getRoutes().forEach(route => {
-  console.log(`   - ${route.path} (${route.name})`)
+console.log('📍 Clean router - optimiziran za activation flow')
+console.log('🔐 Auth status:', {
+  isAuthenticated: authHelper.isAuthenticated(),
+  user: authHelper.getUser() ? { 
+    email: authHelper.getUser().email,
+    role: authHelper.getUser().role,
+    verified: authHelper.getUser().email_verified 
+  } : 'Nema korisnika'
 })
-console.log('🔐 Auth system:', {
-  hasToken: !!authHelper.getToken(),
-  hasUser: !!authHelper.getUser(),
-  isAuthenticated: authHelper.isAuthenticated()
-})
-console.log('🌐 Environment:', import.meta.env.MODE)
-console.log('📧 Email verifikacija: AKTIVNA')
-console.log('🔗 Activation link handler: AKTIVAN')
 
 // Dev-only features
 if (import.meta.env.DEV) {
   console.log('🔧 Development mode - debug features enabled')
   
-  // Globalni debug objekat
   window.__CRM_DEBUG__ = {
     auth: authHelper,
     router,
     routes: router.getRoutes(),
-    reloadApp: () => window.location.reload(),
     clearAuth: () => {
       authHelper.clearAuth()
       localStorage.removeItem('pending_verification_email')
@@ -297,21 +274,23 @@ if (import.meta.env.DEV) {
     },
     testActivation: (email = 'test@crm.com') => {
       const token = 'test-token-' + Date.now()
-      // Testiraj oba formata linkova
-      const activationUrl1 = `http://localhost:5173/?token=${token}&email=${email}`
-      const activationUrl2 = `http://localhost:5173/activate?token=${token}&email=${email}`
-      console.log('🔗 Test activation URL 1 (legacy):', activationUrl1)
-      console.log('🔗 Test activation URL 2 (new):', activationUrl2)
-      return { legacy: activationUrl1, new: activationUrl2 }
+      const activationUrl = `http://localhost:5173/activate?token=${token}&email=${email}`
+      console.log('🔗 Test activation URL:', activationUrl)
+      return activationUrl
     },
-    forceActivation: (email = 'test@crm.com') => {
-      const token = 'force-token-' + Date.now()
-      router.push({
-        path: '/activate',
-        query: { token, email }
-      })
+    simulateAdmin: () => {
+      const adminUser = {
+        id: 1,
+        email: 'admin@crm.com',
+        name: 'Admin User',
+        role: 'admin',
+        email_verified: true
+      }
+      authHelper.setAuth('fake-admin-token', adminUser)
+      console.log('👑 Simuliran admin user:', adminUser)
+      window.location.reload()
     }
   }
   
-  console.log('🐛 Debug objekat dostupan na window.__CRM_DEBUG__')
+  console.log('🐛 Debug dostupan na window.__CRM_DEBUG__')
 }

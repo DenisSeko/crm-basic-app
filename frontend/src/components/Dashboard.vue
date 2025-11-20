@@ -1,6 +1,6 @@
 <template>
   <div class="max-w-6xl mx-auto p-4 sm:p-6">
-    <!-- Statistics Grid - Improved for mobile -->
+    <!-- Statistics Grid -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       <div class="bg-white p-4 sm:p-6 rounded-lg shadow-sm border">
         <h3 class="text-base sm:text-lg font-semibold text-gray-700">Ukupno klijenata</h3>
@@ -8,11 +8,11 @@
         <div class="text-xs text-gray-500 mt-1 space-y-1">
           <div class="flex items-center gap-1">
             <span>📝</span>
-            <span>S bilješkama: {{ getClientsWithNotes() }}</span>
+            <span>S bilješkama: {{ getClientsWithNotesCount }}</span>
           </div>
           <div class="flex items-center gap-1">
             <span>📄</span>
-            <span>Bez bilješki: {{ getClientsWithoutNotes() }}</span>
+            <span>Bez bilješki: {{ getClientsWithoutNotesCount }}</span>
           </div>
         </div>
       </div>
@@ -21,7 +21,7 @@
         <h3 class="text-base sm:text-lg font-semibold text-gray-700">Ukupno bilješki</h3>
         <p class="text-2xl sm:text-3xl font-bold text-green-600">{{ stats.totalNotes }}</p>
         <p class="text-xs text-gray-500 mt-1">
-          Prosjek: {{ getAverageNotes() }} po klijentu
+          Prosjek: {{ getAverageNotesValue }} po klijentu
         </p>
       </div>
       
@@ -87,7 +87,7 @@
               Ukupno bilješki: <span class="font-bold text-green-600">{{ stats.totalNotes }}</span>
             </div>
             <div class="text-xs">
-              Prosjek: <span class="font-semibold">{{ getAverageNotes() }}</span> po klijentu
+              Prosjek: <span class="font-semibold">{{ getAverageNotesValue }}</span> po klijentu
             </div>
           </div>
         </div>
@@ -230,12 +230,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick } from 'vue'
-import api from '../services/api'
+import { ref, reactive, onMounted, nextTick, computed } from 'vue'
+import { clientAPI, notesAPI, authHelper } from '../services/api'
 
 const clients = ref([])
 const clientNotes = reactive({})
-const notesCount = reactive({})
+const notesCount = ref([])
 const notesOpen = reactive({})
 const loadingNotes = reactive({})
 const newNote = reactive({})
@@ -255,6 +255,23 @@ const deletingNoteId = ref(null)
 const addingNoteClientId = ref(null)
 const creatingClient = ref(false)
 const deletingClientId = ref(null)
+
+// COMPUTED PROPERTIES - ostaju iste
+const getClientsWithNotesCount = computed(() => {
+  if (!clients.value || !Array.isArray(clients.value)) return 0
+  return clients.value.filter(client => getNoteCount(client.id) > 0).length
+})
+
+const getClientsWithoutNotesCount = computed(() => {
+  if (!clients.value || !Array.isArray(clients.value)) return 0
+  return clients.value.filter(client => getNoteCount(client.id) === 0).length
+})
+
+const getAverageNotesValue = computed(() => {
+  if (stats.totalNotes === 0 || stats.clients === 0) return '0.00'
+  const average = stats.totalNotes / stats.clients
+  return average.toFixed(2)
+})
 
 const initLoaderAndToggleNotes = async (id) => {
   console.log('🔄 Inicijaliziram loader za klijenta:', id)
@@ -279,18 +296,20 @@ const toggleNotes = async (id) => {
 const loadNotes = async (id) => {
   try {
     console.log('📝 Učitavam bilješke za klijenta:', id)
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    loadingNotes[id] = true
     
-    const response = await api.get(`/clients/${id}/notes`)
-    clientNotes[id] = response.data
-    console.log('✅ Bilješke učitane:', clientNotes[id].length)
+    // KORISTI notesAPI SA EKSPLICITNIM /api/ PREFIXOM
+    const response = await notesAPI.getNotes()
+    const allNotes = response.data || []
     
-    if (notesCount[id]) {
-      notesCount[id].count = clientNotes[id].length
-    }
+    // Filtriraj bilješke za određenog klijenta
+    clientNotes[id] = allNotes.filter(note => note.client_id === id)
+    
+    console.log('✅ Bilješke učitane za klijenta', id, ':', clientNotes[id].length)
+    
   } catch (error) {
     console.error('Greška pri učitavanju bilješki:', error)
-    alert('Greška pri učitavanju bilješki: ' + (error.response?.data?.error || error.message))
+    clientNotes[id] = [] // Fallback na prazan array
   } finally {
     loadingNotes[id] = false
   }
@@ -299,11 +318,10 @@ const loadNotes = async (id) => {
 const loadNotesCount = async () => {
   try {
     console.log('📊 Učitavam broj bilješki po klijentu...')
-    const response = await api.get('/clients/notes-count')
+    const response = await clientAPI.getNotesCountPerClient()
     
-    Object.keys(notesCount).forEach(key => delete notesCount[key])
-    Object.assign(notesCount, response.data)
-    console.log('✅ Broj bilješki po klijentu učitano:', notesCount)
+    notesCount.value = response.data || []
+    console.log('✅ Broj bilješki po klijentu učitano:', notesCount.value.length)
   } catch (error) {
     console.error('Greška pri učitavanju broja bilješki:', error)
     calculateNotesCountFallback()
@@ -312,32 +330,46 @@ const loadNotesCount = async () => {
 
 const calculateNotesCountFallback = () => {
   console.log('🔄 Koristim fallback za brojanje bilješki...')
-  clients.value.forEach(client => {
-    if (!notesCount[client.id]) {
-      notesCount[client.id] = {
-        count: clientNotes[client.id]?.length || 0,
-        name: client.name
-      }
-    }
-  })
+  if (!clients.value || !Array.isArray(clients.value)) {
+    console.log('⚠️ Clients not available for fallback')
+    return
+  }
+  
+  notesCount.value = clients.value.map(client => ({
+    id: client.id,
+    name: client.name,
+    notes_count: clientNotes[client.id]?.length || 0
+  }))
 }
 
 const loadClients = async () => {
   try {
     loading.value = true
     console.log('📋 Učitavam klijente...')
-    const response = await api.get('/clients')
-    clients.value = response.data
+    const response = await clientAPI.getClients()
+    
+    // POKUŠAJTE RAZLIČITE MOGUĆNOSTI
+    if (response.data && Array.isArray(response.data)) {
+      clients.value = response.data
+    } else if (Array.isArray(response)) {
+      clients.value = response
+    } else if (response && response.success && Array.isArray(response.data)) {
+      clients.value = response.data
+    } else {
+      console.warn('⚠️ Unexpected response structure, using empty array')
+      clients.value = []
+    }
+    
     console.log('✅ Klijenti učitani:', clients.value.length)
     
     // UČITAJ SVE POTREBNE PODATKE
     await loadStats()
     await loadNotesCount()
-    await findLastNoteFromData() // OVO JE KLJUČNA PROMJENA
+    await findLastNoteFromData()
     
   } catch (error) {
     console.error('Greška pri učitavanju klijenata:', error)
-    alert('Greška pri učitavanju klijenata: ' + (error.response?.data?.error || error.message))
+    clients.value = [] // Postavite prazan array kao fallback
   } finally {
     loading.value = false
   }
@@ -345,15 +377,15 @@ const loadClients = async () => {
 
 const loadStats = async () => {
   try {
-    const response = await api.get('/clients/stats')
-    const serverStats = response.data
+    const response = await clientAPI.getClientStats()
+    const serverStats = response.data || response
     
     console.log('📊 Podaci s backenda:', serverStats)
     
     const adaptedStats = {
-      clients: serverStats.totalClients || 0,
-      totalNotes: serverStats.totalNotes || 0,
-      lastNote: 'Učitavam...'
+      clients: serverStats.total_clients || 0,
+      totalNotes: serverStats.total_notes || 0,
+      lastNote: serverStats.last_note?.content || 'Nema bilježki'
     }
     
     Object.assign(stats, adaptedStats)
@@ -361,26 +393,25 @@ const loadStats = async () => {
     
   } catch (error) {
     console.error('Greška pri učitavanju statistike:', error)
+    // Fallback na osnovne podatke
     stats.clients = clients.value.length
     stats.totalNotes = calculateTotalNotes()
     stats.lastNote = findLastNoteContent()
   }
 }
 
-// NOVA FUNKCIJA - ne koristi /notes/latest endpoint
 const findLastNoteFromData = async () => {
   try {
     console.log('🔍 Tražim zadnju bilješku iz postojećih podataka...')
     
-    // Prvo pokušaj pronaći iz već učitane notesCount
     if (stats.totalNotes > 0) {
       console.log('📝 Pokušavam učitati sve bilješke za pronalaženje zadnje...')
       
-      // Pokušaj učitati sve bilješke preko postojećeg endpointa
       try {
-        const response = await api.get('/notes')
-        if (response.data && response.data.length > 0) {
-          const latestNote = response.data.reduce((latest, note) => {
+        const response = await notesAPI.getNotes()
+        const notesData = response.data || response
+        if (notesData && Array.isArray(notesData) && notesData.length > 0) {
+          const latestNote = notesData.reduce((latest, note) => {
             const noteDate = new Date(note.created_at)
             const latestDate = latest ? new Date(latest.created_at) : null
             return !latestDate || noteDate > latestDate ? note : latest
@@ -397,7 +428,7 @@ const findLastNoteFromData = async () => {
       }
     }
     
-    // Ako gornji način ne uspije, pokušaj iz clientNotes
+    // Fallback na postojeće podatke
     const lastNoteFromClientNotes = findLastNoteContent()
     if (lastNoteFromClientNotes !== 'Nema bilježki') {
       stats.lastNote = lastNoteFromClientNotes
@@ -405,7 +436,6 @@ const findLastNoteFromData = async () => {
       return
     }
     
-    // Ako nema bilješki
     stats.lastNote = 'Nema bilježki'
     console.log('ℹ️ Nema bilježki u sustavu')
     
@@ -416,13 +446,11 @@ const findLastNoteFromData = async () => {
 }
 
 const calculateTotalNotes = () => {
-  if (stats.totalNotes > 0) {
-    return stats.totalNotes
-  }
+  if (stats.totalNotes > 0) return stats.totalNotes
   
   let total = 0
-  Object.values(notesCount).forEach(item => {
-    total += item.count || 0
+  notesCount.value.forEach(item => {
+    total += item.notes_count || 0
   })
   
   if (total === 0 && clients.value.length > 0) {
@@ -466,7 +494,7 @@ const createClient = async () => {
   try {
     creatingClient.value = true
     console.log('➕ Kreiranje klijenta:', newClient)
-    const response = await api.post('/clients', newClient)
+    const response = await clientAPI.createClient(newClient)
     console.log('✅ Klijent kreiran:', response.data)
     
     Object.assign(newClient, { name: '', email: '', company: '' })
@@ -474,7 +502,7 @@ const createClient = async () => {
     await loadClients()
   } catch (error) {
     console.error('Greška pri kreiranju klijenta:', error)
-    alert('Greška pri kreiranju klijenta: ' + (error.response?.data?.error || error.message))
+    alert('Greška pri kreiranju klijenta: ' + (error.response?.data?.message || error.message))
   } finally {
     creatingClient.value = false
   }
@@ -487,18 +515,18 @@ const cancelNewClient = () => {
 
 const deleteClient = async (id) => {
   const client = clients.value.find(c => c.id === id)
-  if (!confirm(`Jeste li sigurni da želite obrisati klijenta "${client.name}" i sve njegove bilješke?`)) return
+  if (!client || !confirm(`Jeste li sigurni da želite obrisati klijenta "${client.name}" i sve njegove bilješke?`)) return
 
   try {
     deletingClientId.value = id
     console.log('🗑️ Brisanje klijenta:', id)
-    await api.delete(`/clients/${id}`)
+    await clientAPI.deleteClient(id)
     console.log('✅ Klijent obrisan')
     
     await loadClients()
   } catch (error) {
     console.error('Greška pri brisanju klijenata:', error)
-    alert('Greška pri brisanju klijenata: ' + (error.response?.data?.error || error.message))
+    alert('Greška pri brisanju klijenata: ' + (error.response?.data?.message || error.message))
   } finally {
     deletingClientId.value = null
   }
@@ -513,24 +541,35 @@ const addNote = async (id) => {
   try {
     addingNoteClientId.value = id
     console.log('➕ Dodavanje bilješke za klijenta:', id, 'Sadržaj:', newNote[id])
-    await api.post(`/clients/${id}/notes`, { content: newNote[id] })
+    
+    // KORISTI notesAPI SA EKSPLICITNIM /api/ PREFIXOM
+    const response = await notesAPI.createNote({
+      client_id: id,
+      title: 'Bilješka',
+      content: newNote[id],
+      note_type: 'general'
+    })
+    
+    console.log('✅ Bilješka dodana:', response.data)
     newNote[id] = ''
     
+    // Osvježi podatke
     await loadNotesCount()
     if (notesOpen[id]) {
       await loadNotes(id)
     }
     await loadStats()
     await findLastNoteFromData()
-    console.log('✅ Bilješka dodana')
+    
   } catch (error) {
     console.error('Greška pri dodavanju bilješke:', error)
-    alert('Greška pri dodavanju bilješke: ' + (error.response?.data?.error || error.message))
+    alert('Greška pri dodavanju bilješke: ' + (error.response?.data?.message || error.message))
   } finally {
     addingNoteClientId.value = null
   }
 }
 
+// POPRAVLJENA DELETE NOTE METODA
 const deleteNote = async (noteId, clientId) => {
   if (!confirm('Jeste li sigurni da želite obrisati ovu bilješku?')) return
 
@@ -538,59 +577,40 @@ const deleteNote = async (noteId, clientId) => {
     deletingNoteId.value = noteId
     console.log('🗑️ Brisanje bilješke:', noteId)
     
-    await api.delete(`/notes/${noteId}`)
+    // KORISTI notesAPI - on već koristi authHelper interno
+    const result = await notesAPI.deleteNote(noteId)
     
+    console.log('✅ Bilješka obrisana:', result)
+    
+    // Osvježi podatke
     await loadNotesCount()
     await loadNotes(clientId)
     await loadStats()
     await findLastNoteFromData()
-    console.log('✅ Bilješka obrisana')
-  } catch (error) {
-    console.error('Greška pri brisanju bilješke:', error)
     
-    if (error.response?.status === 404) {
-      alert('Bilješka nije pronađena. Možda je već obrisana.')
+  } catch (error) {
+    console.error('❌ Greška pri brisanju bilješke:', error)
+    console.error('❌ Error details:', {
+      message: error.message,
+      status: error.response?.status,
+      userMessage: error.userMessage
+    })
+    
+    if (error.response?.status === 401) {
+      alert('Sesija je istekla. Molimo prijavite se ponovno.')
+      authHelper.clearAuth()
+      router.push('/?auth=login')
     } else {
-      alert('Greška pri brisanju bilješke: ' + (error.response?.data?.error || error.message))
+      alert('Greška pri brisanju bilješke: ' + (error.userMessage || error.message))
     }
   } finally {
     deletingNoteId.value = null
   }
 }
 
-const getClientsWithNotes = () => {
-  if (clients.value.length === 0) return '0'
-  
-  let count = 0
-  clients.value.forEach(client => {
-    if (getNoteCount(client.id) > 0) {
-      count++
-    }
-  })
-  return count.toString()
-}
-
-const getClientsWithoutNotes = () => {
-  if (clients.value.length === 0) return '0'
-  
-  let count = 0
-  clients.value.forEach(client => {
-    if (getNoteCount(client.id) === 0) {
-      count++
-    }
-  })
-  return count.toString()
-}
-
-const getAverageNotes = () => {
-  if (stats.totalNotes === 0 || stats.clients === 0) return '0.00'
-  
-  const average = stats.totalNotes / stats.clients
-  return average.toFixed(2)
-}
-
 const getNoteCount = (clientId) => {
-  return notesCount[clientId]?.count || clientNotes[clientId]?.length || 0
+  const notesInfo = notesCount.value.find(n => n.id === clientId)
+  return notesInfo ? notesInfo.notes_count : clientNotes[clientId]?.length || 0
 }
 
 const getNoteCountDisplay = (clientId) => {
@@ -611,9 +631,11 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* Stilovi ostaju isti */
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

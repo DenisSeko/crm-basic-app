@@ -6,11 +6,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CRM Demo - PostgreSQL</title>
     <!--script src="https://cdn.tailwindcss.com"></script-->
-    <script type="module" crossorigin src="/assets/index-07de9f91.js"></script>
-    <link rel="stylesheet" href="/assets/index-e8c14815.css">
+    <script type="module" crossorigin src="/assets/index-cc0199ba.js"></script>
+    <link rel="stylesheet" href="/assets/index-3be967f2.css">
   </head>
   <body class="bg-gray-50 min-h-screen">
     <div id="app"></div>
     
+    
+// EMERGENCY ACTIVATION HANDLER
+<!-- EMERGENCY ACTIVATION HANDLER -->
+<script>
+console.log('🚨 EMERGENCY ACTIVATION HANDLER LOADED')
+
+// Čekajte da se Vue učita
+setTimeout(() => {
+  const urlParams = new URLSearchParams(window.location.search)
+  const token = urlParams.get('token')
+  const email = urlParams.get('email')
+  
+  console.log('🔍 Emergency check:')
+  console.log('   - Token:', token)
+  console.log('   - Email:', email)
+  console.log('   - Path:', window.location.pathname)
+  
+  if (token && email && window.location.pathname === '/') {
+    console.log('🚨 EMERGENCY REDIRECT TO ACTIVATION!')
+    window.location.href = '/activate?token=' + token + '&email=' + encodeURIComponent(email)
+  }
+}, 100)
+</script>
+
   </body>
 </html>

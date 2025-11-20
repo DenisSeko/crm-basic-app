@@ -6,7 +6,7 @@ const getApiConfig = () => {
   // Provjeri jesmo li u browseru
   if (typeof window === 'undefined') {
     return {
-      baseURL: 'http://localhost:8888/api',
+      baseURL: 'http://localhost:8888',
       timeout: 10000,
     };
   }
@@ -14,14 +14,14 @@ const getApiConfig = () => {
   // Za development na localhostu
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return {
-      baseURL: 'http://localhost:8888/api',
+      baseURL: 'http://localhost:8888',
       timeout: 10000,
     };
   }
 
   // Za production - koristi relative path
   return {
-    baseURL: '/api',
+    baseURL: '',
     timeout: 10000,
   };
 };
@@ -30,7 +30,7 @@ const getApiConfig = () => {
 const api = axios.create(getApiConfig());
 
 // Auth helper sa kompletnom funkcionalnošću
-export const authHelper = {
+const authHelper = {
   setAuth(token, user) {
     try {
       localStorage.setItem('authToken', token);
@@ -55,6 +55,8 @@ export const authHelper = {
       localStorage.removeItem('user');
       localStorage.removeItem('isAuthenticated');
       localStorage.removeItem('authTimestamp');
+      localStorage.removeItem('pending_verification_email');
+      localStorage.removeItem('intended_url');
       delete api.defaults.headers.common['Authorization'];
       console.log('🔐 Auth podaci očišćeni');
     } catch (error) {
@@ -142,6 +144,18 @@ export const authHelper = {
     }
   },
 
+  // Provjera admin role
+  isAdmin() {
+    const user = this.getUser();
+    return user?.role === 'admin';
+  },
+
+  // Provjera email verifikacije
+  isEmailVerified() {
+    const user = this.getUser();
+    return user?.email_verified === true;
+  },
+
   // Dodatna helper metoda za debug
   getAuthInfo() {
     return {
@@ -149,6 +163,8 @@ export const authHelper = {
       hasUser: !!this.getUser(),
       isAuthenticated: this.isAuthenticated(),
       isTokenExpired: this.isTokenExpired(),
+      isAdmin: this.isAdmin(),
+      isEmailVerified: this.isEmailVerified(),
       user: this.getUser(),
       tokenPreview: this.getToken() ? `${this.getToken().substring(0, 20)}...` : null
     };
@@ -248,8 +264,367 @@ api.interceptors.response.use(
   }
 );
 
+// CLIENT API FUNKCIONALNOSTI
+const clientAPI = {
+  // Get all clients
+  async getClients(params = {}) {
+    try {
+      const response = await api.get('/api/clients', { params });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri dohvaćanju klijenata:', error);
+      throw error;
+    }
+  },
+
+  // Get client by ID
+  async getClient(clientId) {
+    try {
+      const response = await api.get(`/api/clients/${clientId}`);
+      return response.data;
+    } catch (error) {
+      console.error(`❌ Greška pri dohvaćanju klijenta ${clientId}:`, error);
+      throw error;
+    }
+  },
+
+  // Create client
+  async createClient(clientData) {
+    try {
+      const response = await api.post('/api/clients', clientData);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri kreiranju klijenta:', error);
+      throw error;
+    }
+  },
+
+  // Update client
+  async updateClient(clientId, clientData) {
+    try {
+      const response = await api.put(`/api/clients/${clientId}`, clientData);
+      return response.data;
+    } catch (error) {
+      console.error(`❌ Greška pri ažuriranju klijenta ${clientId}:`, error);
+      throw error;
+    }
+  },
+
+  // Delete client
+  async deleteClient(clientId) {
+    try {
+      const response = await api.delete(`/api/clients/${clientId}`);
+      return response.data;
+    } catch (error) {
+      console.error(`❌ Greška pri brisanju klijenta ${clientId}:`, error);
+      throw error;
+    }
+  },
+
+  // Get client stats
+  async getClientStats() {
+    try {
+      const response = await api.get('/api/clients/stats');
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri dohvaćanju statistike klijenata:', error);
+      throw error;
+    }
+  },
+
+  // Get notes count per client
+  async getNotesCountPerClient() {
+    try {
+      const response = await api.get('/api/clients/notes-count');
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri dohvaćanju broja bilješki po klijentu:', error);
+      throw error;
+    }
+  }
+};
+
+// NOTES API FUNKCIONALNOSTI
+const notesAPI = {
+  // Get all notes
+  async getNotes(params = {}) {
+    try {
+      const response = await api.get('/api/notes', { params });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri dohvaćanju bilješki:', error);
+      throw error;
+    }
+  },
+
+  // Get note by ID
+  async getNote(noteId) {
+    try {
+      const response = await api.get(`/api/notes/${noteId}`);
+      return response.data;
+    } catch (error) {
+      console.error(`❌ Greška pri dohvaćanju bilješke ${noteId}:`, error);
+      throw error;
+    }
+  },
+
+  // Create note
+  async createNote(noteData) {
+    try {
+      const response = await api.post('/api/notes', noteData);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri kreiranju bilješke:', error);
+      throw error;
+    }
+  },
+
+  // Update note
+  async updateNote(noteId, noteData) {
+    try {
+      const response = await api.put(`/api/notes/${noteId}`, noteData);
+      return response.data;
+    } catch (error) {
+      console.error(`❌ Greška pri ažuriranju bilješke ${noteId}:`, error);
+      throw error;
+    }
+  },
+
+  // DELETE NOTE - POPRAVLJENA SA EKSPLICITNIM /api/ PREFIXOM
+  async deleteNote(noteId) {
+    try {
+      console.log(`🗑️ API: Deleting note ${noteId}`);
+      console.log(`🔍 Full URL: ${api.defaults.baseURL}/api/notes/${noteId}`);
+      
+      const response = await api.delete(`/api/notes/${noteId}`);
+      console.log(`✅ API: Note ${noteId} deleted successfully`);
+      return response.data;
+    } catch (error) {
+      console.error(`❌ API Error deleting note ${noteId}:`, error);
+      throw error;
+    }
+  }
+};
+
+// ADMIN API FUNKCIONALNOSTI
+const adminAPI = {
+  // User Management
+  async getUsers(params = {}) {
+    try {
+      const response = await api.get('/api/admin/users', { params });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri dohvaćanju korisnika:', error);
+      throw error;
+    }
+  },
+
+  async createUser(userData) {
+    try {
+      const response = await api.post('/api/admin/users', userData);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri kreiranju korisnika:', error);
+      throw error;
+    }
+  },
+
+  async updateUser(userId, userData) {
+    try {
+      const response = await api.put(`/api/admin/users/${userId}`, userData);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri ažuriranju korisnika:', error);
+      throw error;
+    }
+  },
+
+  async deleteUser(userId) {
+    try {
+      const response = await api.delete(`/api/admin/users/${userId}`);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri brisanju korisnika:', error);
+      throw error;
+    }
+  },
+
+  async getUserDetails(userId) {
+    try {
+      const response = await api.get(`/api/admin/users/${userId}`);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri dohvaćanju detalja korisnika:', error);
+      throw error;
+    }
+  },
+
+  // User Activation Management
+  async resendActivationEmail(userId) {
+    try {
+      const response = await api.post(`/api/admin/users/${userId}/resend-activation`);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri ponovnom slanju aktivacijskog emaila:', error);
+      throw error;
+    }
+  },
+
+  async deactivateUser(userId) {
+    try {
+      const response = await api.post(`/api/admin/users/${userId}/deactivate`);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri deaktivaciji korisnika:', error);
+      throw error;
+    }
+  },
+
+  async activateUser(userId) {
+    try {
+      const response = await api.post(`/api/admin/users/${userId}/activate`);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri aktivaciji korisnika:', error);
+      throw error;
+    }
+  }
+};
+
+// AUTH API FUNKCIONALNOSTI
+const authAPI = {
+  // Login
+  async login(credentials) {
+    try {
+      const response = await api.post('/api/auth/login', credentials);
+      
+      if (response.data.success && response.data.token) {
+        authHelper.setAuth(response.data.token, response.data.user);
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri prijavi:', error);
+      throw error;
+    }
+  },
+
+  // Register (ako je potrebno)
+  async register(userData) {
+    try {
+      const response = await api.post('/api/auth/register', userData);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri registraciji:', error);
+      throw error;
+    }
+  },
+
+  // Account Activation
+  async verifyAccount(activationData) {
+    try {
+      const response = await api.post('/api/auth/verify-account', activationData);
+      
+      if (response.data.success && response.data.token) {
+        authHelper.setAuth(response.data.token, response.data.user);
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri aktivaciji računa:', error);
+      throw error;
+    }
+  },
+
+  // Password Reset (opcionalno)
+  async requestPasswordReset(email) {
+    try {
+      const response = await api.post('/api/auth/forgot-password', { email });
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri zahtjevu za reset lozinke:', error);
+      throw error;
+    }
+  },
+
+  async resetPassword(resetData) {
+    try {
+      const response = await api.post('/api/auth/reset-password', resetData);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri resetiranju lozinke:', error);
+      throw error;
+    }
+  },
+
+  // Logout
+  async logout() {
+    try {
+      const response = await api.post('/api/auth/logout');
+      authHelper.clearAuth();
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri odjavi:', error);
+      authHelper.clearAuth(); // Uvijek očistimo lokalno
+      throw error;
+    }
+  },
+
+  // Verify Token
+  async verifyToken() {
+    try {
+      const response = await api.get('/api/auth/verify');
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri verifikaciji tokena:', error);
+      throw error;
+    }
+  }
+};
+
+// USER PROFILE API
+const userAPI = {
+  async getProfile() {
+    try {
+      const response = await api.get('/api/user/profile');
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri dohvaćanju profila:', error);
+      throw error;
+    }
+  },
+
+  async updateProfile(profileData) {
+    try {
+      const response = await api.put('/api/user/profile', profileData);
+      
+      // Ažuriraj lokalne podatke ako je uspješno
+      if (response.data.success) {
+        const currentUser = authHelper.getUser();
+        const updatedUser = { ...currentUser, ...response.data.user };
+        authHelper.setAuth(authHelper.getToken(), updatedUser);
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri ažuriranju profila:', error);
+      throw error;
+    }
+  },
+
+  async changePassword(passwordData) {
+    try {
+      const response = await api.put('/api/user/change-password', passwordData);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Greška pri promjeni lozinke:', error);
+      throw error;
+    }
+  }
+};
+
 // Utility funkcije za često korištene operacije
-export const apiUtils = {
+const apiUtils = {
   // Brzi GET zahtjev sa error handlingom
   async safeGet(url, config = {}) {
     try {
@@ -272,10 +647,21 @@ export const apiUtils = {
     }
   },
 
+  // Brzi DELETE zahtjev sa error handlingom
+  async safeDelete(url, config = {}) {
+    try {
+      const response = await api.delete(url, config);
+      return response.data;
+    } catch (error) {
+      console.error(`❌ Safe DELETE error for ${url}:`, error.userMessage || error.message);
+      throw error;
+    }
+  },
+
   // Provjera da li je backend dostupan
   async healthCheck() {
     try {
-      const response = await api.get('/health');
+      const response = await api.get('/api/health');
       return response.status === 200;
     } catch (error) {
       console.error('❌ Health check failed:', error.message);
@@ -285,13 +671,15 @@ export const apiUtils = {
 };
 
 // Globalna funkcija za debug auth stanja
-export const debugAuth = () => {
+const debugAuth = () => {
   const authInfo = authHelper.getAuthInfo();
   console.group('🔐 Auth Debug Info');
   console.log('Authenticated:', authInfo.isAuthenticated);
   console.log('Has Token:', authInfo.hasToken);
   console.log('Has User:', authInfo.hasUser);
   console.log('Token Expired:', authInfo.isTokenExpired);
+  console.log('Is Admin:', authInfo.isAdmin);
+  console.log('Email Verified:', authInfo.isEmailVerified);
   console.log('User:', authInfo.user);
   console.log('Token Preview:', authInfo.tokenPreview);
   console.groupEnd();
@@ -306,4 +694,15 @@ if (typeof window !== 'undefined') {
   }, 100);
 }
 
+// JEDINSTVENI EXPORT 
 export default api;
+export { 
+  clientAPI,
+  notesAPI,
+  adminAPI, 
+  authAPI, 
+  userAPI, 
+  apiUtils, 
+  debugAuth,
+  authHelper 
+};

@@ -199,7 +199,7 @@ const message = ref('')
 const messageType = ref('')
 const emailNotVerified = ref(false)
 const resendingVerification = ref(false)
-const showPassword = ref(false) // 👈 NOVO: kontrolira prikaz lozinke
+const showPassword = ref(false)
 const errors = reactive({
   email: '',
   password: ''
@@ -245,7 +245,6 @@ const isFormValid = computed(() => {
          loginData.password.length >= 1
 })
 
-// 👈 NOVO: Password strength calculator
 const passwordStrength = computed(() => {
   const password = loginData.password
   if (!password) return 0
@@ -267,7 +266,7 @@ const passwordStrength = computed(() => {
   // Contains special characters
   if (/[!@#$%^&*(),.?":{}|<>]/.test(password)) strength++
   
-  return Math.min(strength, 4) // Max 4 for the progress bar
+  return Math.min(strength, 4)
 })
 
 // Methods
@@ -286,7 +285,6 @@ const clearError = (field) => {
   }
 }
 
-// 👈 NOVO: Password strength text
 const getPasswordStrengthText = () => {
   const strength = passwordStrength.value
   switch (strength) {
@@ -337,12 +335,13 @@ const resendVerificationEmail = async () => {
   
   try {
     resendingVerification.value = true
-    await api.post('/auth/resend-verification', { email: loginData.email })
+    // KORIGIRAN ENDPOINT
+    await api.post('/api/auth/forgot-password', { email: loginData.email })
     showMessage('Verifikacijski email je ponovno poslan! Provjerite svoj inbox.', 'success')
     emailNotVerified.value = false
   } catch (error) {
     console.error('Greška pri slanju verifikacijskog emaila:', error)
-    showMessage('Greška pri slanju verifikacijskog emaila: ' + (error.response?.data?.error || error.message), 'error')
+    showMessage('Greška pri slanju verifikacijskog emaila: ' + (error.response?.data?.message || error.message), 'error')
   } finally {
     resendingVerification.value = false
   }
@@ -366,6 +365,7 @@ const autoPopulateFromURL = () => {
   }
 }
 
+// POPRAVLJENA LOGIN METODA
 const handleLogin = async () => {
   if (!validateForm()) {
     return
@@ -382,8 +382,12 @@ const handleLogin = async () => {
 
   try {
     console.log('🔐 LoginForm: Pokrećem prijavu za:', loginData.email)
+    console.log('🔍 LoginForm: Koristim direktan API poziv sa /api/ prefixom')
     
-    const response = await api.post('/auth/login', loginData)
+    // DIREKTAN API POZIV SA EKSPLICITNIM /api/ PREFIXOM
+    const response = await api.post('/api/auth/login', loginData)
+    
+    console.log('✅ LoginForm: Odgovor od API:', response.data)
     
     const { token, user } = response.data
     
@@ -406,19 +410,31 @@ const handleLogin = async () => {
     console.log('   - User:', !!authHelper.getUser())
     console.log('   - isAuthenticated:', authHelper.isAuthenticated())
     
-    showMessage(`Uspješno ste prijavljeni! Dobrodošli, ${user.firstName} ${user.lastName}`, 'success')
+    showMessage(`Uspješno ste prijavljeni! Dobrodošli, ${user.first_name || user.full_name || user.email}`, 'success')
     
     console.log('✅ LoginForm: Prijava uspješna, emitiram podatke...')
     
     // Emit podatke AuthManager-u
     emit('login', { token, user })
     
+    // Preusmjeri na dashboard
+    await router.push('/dashboard')
+    
   } catch (error) {
     console.error('❌ LoginForm: Greška pri prijavi:', error)
+    console.error('❌ LoginForm: Error detalji:', {
+      message: error.message,
+      url: error.config?.url,
+      baseURL: error.config?.baseURL,
+      status: error.response?.status,
+      data: error.response?.data
+    })
     
     let errorMessage = 'Došlo je do greške pri prijavi. Pokušajte ponovno.'
     
-    if (error.response?.data?.error) {
+    if (error.response?.data?.message) {
+      errorMessage = error.response.data.message
+    } else if (error.response?.data?.error) {
       errorMessage = error.response.data.error
     } else if (error.code === 'NETWORK_ERROR' || !error.response) {
       errorMessage = 'Problem s mrežnom vezom. Provjerite internetsku vezu.'
@@ -427,6 +443,8 @@ const handleLogin = async () => {
     } else if (error.response?.status === 401) {
       errorMessage = 'Pogrešan email ili lozinka.'
       errors.password = 'Pogrešna lozinka'
+    } else if (error.response?.status === 404) {
+      errorMessage = 'Login endpoint nije pronađen. Provjerite server konfiguraciju.'
     }
     
     showMessage(errorMessage, 'error')
@@ -465,7 +483,7 @@ defineExpose({
     message.value = ''
     messageType.value = ''
     emailNotVerified.value = false
-    showPassword.value = false // 👈 Reset show password
+    showPassword.value = false
     Object.keys(errors).forEach(key => errors[key] = '')
   },
   
