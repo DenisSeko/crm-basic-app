@@ -48,8 +48,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { authHelper } from './services/api'
 
 // Components
@@ -57,7 +57,6 @@ import AppHeader from './components/AppHeader.vue'
 import Loader from './components/Loader.vue'
 
 const router = useRouter()
-const route = useRoute()
 
 // State
 const user = ref(null)
@@ -117,18 +116,24 @@ const handleAuthSuccess = async (authData) => {
     
     // Ažuriraj loader poruke
     loaderMessage.value = 'Uspješno prijavljeni!'
-    loaderSubMessage.value = `Dobrodošli, ${authData.user.firstName}!`
+    loaderSubMessage.value = `Dobrodošli, ${authData.user.first_name}!`
     
     // Prikaži poruku uspjeha
-    showGlobalMessage(`Dobrodošli, ${authData.user.firstName}!`, 'success')
+    showGlobalMessage(`Dobrodošli, ${authData.user.first_name}!`, 'success')
     
-    // Simuliraj loading prije prelaska na dashboard
+    // Simuliraj loading prije preusmjeravanja
     await new Promise(resolve => setTimeout(resolve, 1200))
     
-    console.log('✅ Auth success završeno, prebacujem na dashboard...')
+    console.log('🔍 Provjeram ulogu korisnika:', authData.user.role)
     
-    // Preusmjeri na dashboard
-    router.push('/dashboard')
+    // KLJUČNA PROMJENA: Preusmjeri na osnovu uloge korisnika
+    if (authData.user.role === 'admin') {
+      console.log('👑 Admin korisnik - preusmjeravam na /admin')
+      router.push('/admin')
+    } else {
+      console.log('👤 Obični korisnik - preusmjeravam na /dashboard')
+      router.push('/dashboard')
+    }
     
   } catch (error) {
     console.error('Auth success handling error:', error)
@@ -150,7 +155,13 @@ const checkAuthStatus = () => {
     const storedUser = authHelper.getUser()
     user.value = storedUser
     console.log('✅ User restored from localStorage:', user.value)
-    showGlobalMessage(`Dobrodošli natrag, ${storedUser.firstName}!`, 'success')
+    showGlobalMessage(`Dobrodošli natrag, ${storedUser.first_name}!`, 'success')
+    
+    // KLJUČNA PROMJENA: Preusmjeri admin korisnike na admin panel pri pokretanju app
+    if (storedUser.role === 'admin' && window.location.pathname === '/dashboard') {
+      console.log('👑 Admin korisnik na dashboardu - preusmjeravam na /admin')
+      router.push('/admin')
+    }
   } else {
     user.value = null
     console.log('ℹ️ Nema validnog auth tokena')
@@ -189,21 +200,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.page-fade-enter-active,
-.page-fade-leave-active {
-  transition: opacity 0.4s ease, transform 0.4s ease;
-}
-
-.page-fade-enter-from {
-  opacity: 0;
-  transform: translateY(20px);
-}
-
-.page-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-20px);
-}
-
 .container {
   max-width: 1200px;
 }
