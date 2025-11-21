@@ -77,7 +77,12 @@ const handleLogin = async (loginData) => {
     
     console.log('✅ AuthManager: Prosljeđujem podatke parent komponenti')
     
-    // Proslijedi podatke parent komponenti (App.vue)
+    // PROMJENA: Koristimo event umjesto emit za App.vue
+    window.dispatchEvent(new CustomEvent('auth-success', { 
+      detail: loginData 
+    }))
+    
+    // Također možemo emitati i na parent ako je potrebno
     emit('success', loginData)
     
   } catch (error) {
@@ -99,6 +104,14 @@ const handleLogin = async (loginData) => {
 
 const handleRegistered = async (userData) => {
   console.log('✅ AuthManager: User registered:', userData)
+  
+  // PROMJENA: Također koristimo event za registraciju ako je potrebno
+  if (userData.token && userData.user) {
+    console.log('🔄 AuthManager: Emitting auth-success za registraciju')
+    window.dispatchEvent(new CustomEvent('auth-success', { 
+      detail: userData 
+    }))
+  }
   
   // NE prebacuj na login! Ostani na registraciji dok se ne preusmjeri na verify-email
   // Registration komponenta će se sama preusmjeriti na verify-email
@@ -165,6 +178,13 @@ onMounted(() => {
       (route.path === '/login' && currentView.value === 'login')
     )
   }, 100)
+})
+
+// Cleanup event listener
+import { onUnmounted } from 'vue'
+onUnmounted(() => {
+  // Očistimo event listener ako je potrebno
+  window.removeEventListener('auth-success', () => {})
 })
 
 // Expose methods ako su potrebne

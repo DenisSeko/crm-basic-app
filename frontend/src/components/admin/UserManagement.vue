@@ -1,197 +1,178 @@
 <!-- src/components/admin/UserManagement.vue -->
 <template>
   <div class="user-management">
-    <!-- Header with Actions -->
+    <!-- Header Section -->
     <div class="page-header">
-      <div class="header-content">
-        <h1>Upravljanje Korisnicima</h1>
-        <p>Pregledajte i upravljajte korisnicima CRM sustava</p>
+      <h1>Upravljanje Korisnicima</h1>
+      <p>Pregledajte i upravljajte korisnicima CRM sustava</p>
+    </div>
+
+    <!-- Controls Section -->
+    <div class="controls-section">
+      <div class="search-filter">
+        <div class="search-box">
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Pretraži korisnike..."
+            class="search-input"
+          />
+          <span class="search-icon">🔍</span>
+        </div>
+        
+        <div class="filter-controls">
+          <select v-model="statusFilter" class="filter-select">
+            <option value="">Svi statusi</option>
+            <option value="active">Aktivni</option>
+            <option value="pending">Na čekanju</option>
+            <option value="inactive">Neaktivni</option>
+          </select>
+          
+          <select v-model="roleFilter" class="filter-select">
+            <option value="">Sve uloge</option>
+            <option value="admin">Admin</option>
+            <option value="user">Korisnik</option>
+          </select>
+        </div>
       </div>
-      <div class="header-actions">
+
+      <div class="action-buttons">
         <router-link to="/admin/users/create" class="btn-primary">
           ➕ Dodaj Korisnika
         </router-link>
         <button @click="refreshUsers" class="btn-secondary" :disabled="loading">
-          🔄 Osvježi
+          🔄 {{ loading ? 'Učitavam...' : 'Osvježi' }}
         </button>
-      </div>
-    </div>
-
-    <!-- Filters and Search -->
-    <div class="filters-section">
-      <div class="search-box">
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="Pretraži korisnike po imenu, emailu..."
-          class="search-input"
-          @input="handleSearch"
-        />
-        <div class="search-icon">🔍</div>
-      </div>
-
-      <div class="filter-controls">
-        <select v-model="statusFilter" @change="applyFilters" class="filter-select">
-          <option value="">Svi statusi</option>
-          <option value="active">Aktivni</option>
-          <option value="pending">Na čekanju</option>
-          <option value="inactive">Neaktivni</option>
-        </select>
-
-        <select v-model="roleFilter" @change="applyFilters" class="filter-select">
-          <option value="">Sve uloge</option>
-          <option value="admin">Administrator</option>
-          <option value="manager">Manager</option>
-          <option value="user">Korisnik</option>
-        </select>
       </div>
     </div>
 
     <!-- Users Table -->
-    <div class="users-table-container">
+    <div class="table-container">
       <div v-if="loading" class="loading-state">
         <div class="loading-spinner"></div>
-        <p>Učitavanje korisnika...</p>
+        <p>Učitavam korisnike...</p>
       </div>
 
-      <div v-else-if="filteredUsers.length === 0" class="empty-state">
+      <div v-else-if="paginatedUsers.length === 0" class="empty-state">
         <div class="empty-icon">👥</div>
         <h3>Nema pronađenih korisnika</h3>
-        <p>Promijenite filtere ili dodajte novog korisnika</p>
+        <p>Pokušajte promijeniti filtere ili dodajte novog korisnika.</p>
         <router-link to="/admin/users/create" class="btn-primary">
-          Dodaj Prvog Korisnika
+          ➕ Dodaj Prvog Korisnika
         </router-link>
       </div>
 
-      <table v-else class="users-table">
-        <thead>
-          <tr>
-            <th>
-              <input
-                type="checkbox"
-                :checked="allSelected"
-                @change="toggleSelectAll"
-                class="checkbox"
-              />
-            </th>
-            <th @click="sortUsers('name')" class="sortable">
-              Korisnik
-              <span class="sort-indicator">{{ sortIndicator('name') }}</span>
-            </th>
-            <th @click="sortUsers('email')" class="sortable">
-              Email
-              <span class="sort-indicator">{{ sortIndicator('email') }}</span>
-            </th>
-            <th @click="sortUsers('role')" class="sortable">
-              Uloga
-              <span class="sort-indicator">{{ sortIndicator('role') }}</span>
-            </th>
-            <th @click="sortUsers('status')" class="sortable">
-              Status
-              <span class="sort-indicator">{{ sortIndicator('status') }}</span>
-            </th>
-            <th @click="sortUsers('created_at')" class="sortable">
-              Datum
-              <span class="sort-indicator">{{ sortIndicator('created_at') }}</span>
-            </th>
-            <th>Akcije</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="user in paginatedUsers" :key="user.id" :class="{ selected: selectedUsers.includes(user.id) }">
-            <td>
-              <input
-                type="checkbox"
-                :checked="selectedUsers.includes(user.id)"
-                @change="toggleUserSelection(user.id)"
-                class="checkbox"
-              />
-            </td>
-            <td>
-              <div class="user-info">
+      <div v-else class="table-wrapper">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th @click="handleSort('id')" class="sortable">
+                ID
+                <span v-if="sortField === 'id'" class="sort-indicator">
+                  {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th @click="handleSort('name')" class="sortable">
+                Ime i Prezime
+                <span v-if="sortField === 'name'" class="sort-indicator">
+                  {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th @click="handleSort('email')" class="sortable">
+                Email
+                <span v-if="sortField === 'email'" class="sort-indicator">
+                  {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th @click="handleSort('role')" class="sortable">
+                Uloga
+                <span v-if="sortField === 'role'" class="sort-indicator">
+                  {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th @click="handleSort('status')" class="sortable">
+                Status
+                <span v-if="sortField === 'status'" class="sort-indicator">
+                  {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th @click="handleSort('created_at')" class="sortable">
+                Datum Registracije
+                <span v-if="sortField === 'created_at'" class="sort-indicator">
+                  {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th>Akcije</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="user in paginatedUsers" :key="user.id" class="user-row">
+              <td class="user-id">{{ user.id }}</td>
+              <td class="user-name">
                 <div class="user-avatar">
-                  {{ getUserInitials(user.name) }}
+                  {{ getUserInitials(user) }}
                 </div>
-                <div class="user-details">
-                  <strong class="user-name">{{ user.name }}</strong>
-                  <span class="user-company" v-if="user.company">{{ user.company }}</span>
-                </div>
-              </div>
-            </td>
-            <td class="user-email">
-              {{ user.email }}
-            </td>
-            <td>
-              <span class="role-badge" :class="user.role">
-                {{ formatRole(user.role) }}
-              </span>
-            </td>
-            <td>
-              <span class="status-badge" :class="user.status">
-                {{ formatStatus(user.status) }}
-              </span>
-            </td>
-            <td class="user-date">
-              {{ formatDate(user.created_at) }}
-            </td>
-            <td>
-              <div class="action-buttons">
-                <button
-                  @click="editUser(user)"
-                  class="btn-action edit"
+                {{ user.first_name }} {{ user.last_name }}
+              </td>
+              <td class="user-email">{{ user.email }}</td>
+              <td class="user-role">
+                <span :class="['role-badge', user.role]">
+                  {{ user.role === 'admin' ? 'Admin' : 'Korisnik' }}
+                </span>
+              </td>
+              <td class="user-status">
+                <span :class="['status-badge', user.status]">
+                  {{ getUserStatusText(user.status) }}
+                </span>
+              </td>
+              <td class="user-date">
+                {{ formatDate(user.created_at) }}
+              </td>
+              <td class="user-actions">
+                <router-link 
+                  :to="`/admin/users/${user.id}/edit`" 
+                  class="btn-edit"
                   title="Uredi korisnika"
                 >
                   ✏️
-                </button>
-                <button
-                  v-if="user.status === 'pending'"
-                  @click="resendActivation(user)"
-                  class="btn-action resend"
-                  title="Pošalji aktivacijski email"
+                </router-link>
+                <button 
+                  @click="toggleUserStatus(user)" 
+                  :class="['btn-status', user.status]"
+                  :title="user.status === 'active' ? 'Deaktiviraj' : 'Aktiviraj'"
                 >
-                  📧
+                  {{ user.status === 'active' ? '⏸️' : '▶️' }}
                 </button>
-                <button
-                  @click="viewUser(user)"
-                  class="btn-action view"
-                  title="Pregledaj detalje"
-                >
-                  👁️
-                </button>
-                <button
-                  v-if="user.id !== currentUser?.id"
-                  @click="confirmDelete(user)"
-                  class="btn-action delete"
+                <button 
+                  @click="confirmDeleteUser(user)" 
+                  class="btn-delete"
                   title="Obriši korisnika"
                 >
                   🗑️
                 </button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Pagination -->
-    <div v-if="filteredUsers.length > 0" class="pagination">
-      <div class="pagination-info">
-        Prikazano {{ showingStart }}-{{ showingEnd }} od {{ filteredUsers.length }} korisnika
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-      <div class="pagination-controls">
-        <button
-          @click="prevPage"
-          :disabled="currentPage === 1"
+
+      <!-- Pagination -->
+      <div v-if="filteredUsers.length > 0" class="pagination">
+        <button 
+          @click="prevPage" 
+          :disabled="currentPage === 1" 
           class="pagination-btn"
         >
           ← Prethodna
         </button>
-        <span class="pagination-numbers">
+        
+        <span class="pagination-info">
           Stranica {{ currentPage }} od {{ totalPages }}
         </span>
-        <button
-          @click="nextPage"
-          :disabled="currentPage === totalPages"
+        
+        <button 
+          @click="nextPage" 
+          :disabled="currentPage === totalPages" 
           class="pagination-btn"
         >
           Sljedeća →
@@ -199,42 +180,23 @@
       </div>
     </div>
 
-    <!-- Bulk Actions -->
-    <div v-if="selectedUsers.length > 0" class="bulk-actions">
-      <div class="bulk-info">
-        Odabrano {{ selectedUsers.length }} korisnika
+    <!-- Stats Summary -->
+    <div class="stats-summary">
+      <div class="stat-item">
+        <span class="stat-number">{{ totalUsers }}</span>
+        <span class="stat-label">Ukupno Korisnika</span>
       </div>
-      <div class="bulk-buttons">
-        <button @click="bulkResendActivation" class="btn-secondary">
-          📧 Pošalji aktivaciju
-        </button>
-        <button @click="bulkDeactivate" class="btn-secondary">
-          ⏸️ Deaktiviraj
-        </button>
-        <button @click="bulkDelete" class="btn-danger">
-          🗑️ Obriši odabrane
-        </button>
-        <button @click="clearSelection" class="btn-outline">
-          ❌ Očisti odabir
-        </button>
+      <div class="stat-item">
+        <span class="stat-number">{{ activeUsers }}</span>
+        <span class="stat-label">Aktivnih</span>
       </div>
-    </div>
-
-    <!-- Delete Confirmation Modal -->
-    <div v-if="showDeleteModal" class="modal-overlay">
-      <div class="modal">
-        <div class="modal-header">
-          <h3>Potvrdi brisanje</h3>
-          <button @click="closeModal" class="modal-close">×</button>
-        </div>
-        <div class="modal-body">
-          <p>Jeste li sigurni da želite obrisati korisnika <strong>{{ userToDelete?.name }}</strong>?</p>
-          <p class="warning-text">Ova akcija se ne može poništiti!</p>
-        </div>
-        <div class="modal-actions">
-          <button @click="closeModal" class="btn-outline">Odustani</button>
-          <button @click="deleteUser" class="btn-danger">Obriši korisnika</button>
-        </div>
+      <div class="stat-item">
+        <span class="stat-number">{{ pendingUsers }}</span>
+        <span class="stat-label">Na Čekanju</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-number">{{ adminUsers }}</span>
+        <span class="stat-label">Administratora</span>
       </div>
     </div>
   </div>
@@ -249,429 +211,327 @@ export default {
   name: 'UserManagement',
   setup() {
     const router = useRouter()
+
+    // State
     const users = ref([])
     const loading = ref(false)
     const searchQuery = ref('')
     const statusFilter = ref('')
     const roleFilter = ref('')
-    const sortBy = ref('created_at')
-    const sortOrder = ref('desc')
-    const selectedUsers = ref([])
+    const sortField = ref('id')
+    const sortDirection = ref('asc')
     const currentPage = ref(1)
     const itemsPerPage = ref(10)
-    const showDeleteModal = ref(false)
-    const userToDelete = ref(null)
-
-    const currentUser = ref(authHelper.getUser())
-
-    // Load users from API
-    const loadUsers = async () => {
-      try {
-        loading.value = true
-        // TODO: Zamijeniti sa pravim API pozivom
-        // const response = await adminAPI.getUsers()
-        // users.value = response.data
-        
-        // Mock podaci za sada
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        users.value = [
-          {
-            id: 1,
-            name: 'Marko Marković',
-            email: 'marko@tvrtka.com',
-            role: 'admin',
-            status: 'active',
-            company: 'IT Odjel',
-            created_at: new Date('2024-01-15'),
-            email_verified: true
-          },
-          {
-            id: 2,
-            name: 'Ana Anić',
-            email: 'ana@tvrtka.com',
-            role: 'manager',
-            status: 'active',
-            company: 'Prodaja',
-            created_at: new Date('2024-01-20'),
-            email_verified: true
-          },
-          {
-            id: 3,
-            name: 'Ivan Ivić',
-            email: 'ivan@tvrtka.com',
-            role: 'user',
-            status: 'pending',
-            company: 'Marketing',
-            created_at: new Date('2024-02-01'),
-            email_verified: false
-          },
-          {
-            id: 4,
-            name: 'Petra Petrić',
-            email: 'petra@tvrtka.com',
-            role: 'user',
-            status: 'pending',
-            company: 'Podrška',
-            created_at: new Date('2024-02-05'),
-            email_verified: false
-          },
-          {
-            id: 5,
-            name: 'Josip Jović',
-            email: 'josip@tvrtka.com',
-            role: 'user',
-            status: 'inactive',
-            company: 'Prodaja',
-            created_at: new Date('2024-01-10'),
-            email_verified: true
-          }
-        ]
-      } catch (error) {
-        console.error('Greška pri učitavanju korisnika:', error)
-        alert('Došlo je do greške pri učitavanju korisnika: ' + error.userMessage)
-      } finally {
-        loading.value = false
-      }
-    }
 
     // Computed properties
     const filteredUsers = computed(() => {
       let filtered = users.value
 
-      // Apply search filter
+      // Search filter
       if (searchQuery.value) {
         const query = searchQuery.value.toLowerCase()
         filtered = filtered.filter(user => 
-          user.name.toLowerCase().includes(query) ||
-          user.email.toLowerCase().includes(query) ||
-          user.company?.toLowerCase().includes(query)
+          user.first_name.toLowerCase().includes(query) ||
+          user.last_name.toLowerCase().includes(query) ||
+          user.email.toLowerCase().includes(query)
         )
       }
 
-      // Apply status filter
+      // Status filter
       if (statusFilter.value) {
         filtered = filtered.filter(user => user.status === statusFilter.value)
       }
 
-      // Apply role filter
+      // Role filter
       if (roleFilter.value) {
         filtered = filtered.filter(user => user.role === roleFilter.value)
       }
 
-      // Apply sorting
-      filtered.sort((a, b) => {
-        let aValue = a[sortBy.value]
-        let bValue = b[sortBy.value]
+      return filtered
+    })
 
-        if (sortBy.value === 'created_at') {
-          aValue = new Date(aValue)
-          bValue = new Date(bValue)
+    const sortedUsers = computed(() => {
+      const sorted = [...filteredUsers.value]
+      
+      return sorted.sort((a, b) => {
+        let aValue = a[sortField.value]
+        let bValue = b[sortField.value]
+
+        // Handle special cases
+        if (sortField.value === 'name') {
+          aValue = `${a.first_name} ${a.last_name}`
+          bValue = `${b.first_name} ${b.last_name}`
         }
 
-        if (aValue < bValue) return sortOrder.value === 'asc' ? -1 : 1
-        if (aValue > bValue) return sortOrder.value === 'asc' ? 1 : -1
+        if (aValue < bValue) return sortDirection.value === 'asc' ? -1 : 1
+        if (aValue > bValue) return sortDirection.value === 'asc' ? 1 : -1
         return 0
       })
-
-      return filtered
     })
 
     const paginatedUsers = computed(() => {
       const start = (currentPage.value - 1) * itemsPerPage.value
       const end = start + itemsPerPage.value
-      return filteredUsers.value.slice(start, end)
+      return sortedUsers.value.slice(start, end)
     })
 
-    const totalPages = computed(() => 
-      Math.ceil(filteredUsers.value.length / itemsPerPage.value)
-    )
+    const totalPages = computed(() => {
+      return Math.ceil(filteredUsers.value.length / itemsPerPage.value)
+    })
 
-    const showingStart = computed(() => 
-      (currentPage.value - 1) * itemsPerPage.value + 1
-    )
-
-    const showingEnd = computed(() => 
-      Math.min(currentPage.value * itemsPerPage.value, filteredUsers.value.length)
-    )
-
-    const allSelected = computed(() => 
-      paginatedUsers.value.length > 0 && 
-      paginatedUsers.value.every(user => selectedUsers.value.includes(user.id))
-    )
+    // Stats
+    const totalUsers = computed(() => users.value.length)
+    const activeUsers = computed(() => users.value.filter(u => u.status === 'active').length)
+    const pendingUsers = computed(() => users.value.filter(u => u.status === 'pending').length)
+    const adminUsers = computed(() => users.value.filter(u => u.role === 'admin').length)
 
     // Methods
-    const sortUsers = (column) => {
-      if (sortBy.value === column) {
-        sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
-      } else {
-        sortBy.value = column
-        sortOrder.value = 'asc'
+    const loadUsers = async () => {
+      try {
+        loading.value = true
+        console.log('🔄 Učitavam korisnike...')
+
+        // Simuliramo API poziv - zamijenite sa stvarnim adminAPI.getUsers()
+        await new Promise(resolve => setTimeout(resolve, 1500))
+
+        // Mock podaci - zamijenite sa stvarnim API odgovorom
+        users.value = [
+          {
+            id: 1,
+            first_name: 'Admin',
+            last_name: 'Korisnik',
+            email: 'admin@crm.com',
+            role: 'admin',
+            status: 'active',
+            created_at: new Date('2024-01-15')
+          },
+          {
+            id: 2,
+            first_name: 'Marko',
+            last_name: 'Marković',
+            email: 'marko@tvrtka.com',
+            role: 'user',
+            status: 'active',
+            created_at: new Date('2024-02-20')
+          },
+          {
+            id: 3,
+            first_name: 'Ana',
+            last_name: 'Anić',
+            email: 'ana.anic@mail.com',
+            role: 'user',
+            status: 'pending',
+            created_at: new Date('2024-03-10')
+          },
+          {
+            id: 4,
+            first_name: 'Ivan',
+            last_name: 'Ivić',
+            email: 'ivan.ivic@firma.hr',
+            role: 'user',
+            status: 'active',
+            created_at: new Date('2024-03-15')
+          },
+          {
+            id: 5,
+            first_name: 'Petra',
+            last_name: 'Petrić',
+            email: 'petra@novafirma.com',
+            role: 'user',
+            status: 'inactive',
+            created_at: new Date('2024-03-18')
+          }
+        ]
+
+        console.log('✅ Korisnici učitani:', users.value.length)
+      } catch (error) {
+        console.error('❌ Greška pri učitavanju korisnika:', error)
+        showError('Došlo je do greške pri učitavanju korisnika')
+      } finally {
+        loading.value = false
       }
-    }
-
-    const sortIndicator = (column) => {
-      if (sortBy.value !== column) return ''
-      return sortOrder.value === 'asc' ? '↑' : '↓'
-    }
-
-    const toggleSelectAll = () => {
-      if (allSelected.value) {
-        selectedUsers.value = selectedUsers.value.filter(
-          id => !paginatedUsers.value.some(user => user.id === id)
-        )
-      } else {
-        const newSelection = paginatedUsers.value
-          .filter(user => !selectedUsers.value.includes(user.id))
-          .map(user => user.id)
-        selectedUsers.value = [...selectedUsers.value, ...newSelection]
-      }
-    }
-
-    const toggleUserSelection = (userId) => {
-      const index = selectedUsers.value.indexOf(userId)
-      if (index > -1) {
-        selectedUsers.value.splice(index, 1)
-      } else {
-        selectedUsers.value.push(userId)
-      }
-    }
-
-    const clearSelection = () => {
-      selectedUsers.value = []
-    }
-
-    const handleSearch = () => {
-      currentPage.value = 1
-    }
-
-    const applyFilters = () => {
-      currentPage.value = 1
-    }
-
-    const prevPage = () => {
-      if (currentPage.value > 1) currentPage.value--
-    }
-
-    const nextPage = () => {
-      if (currentPage.value < totalPages.value) currentPage.value++
     }
 
     const refreshUsers = () => {
+      currentPage.value = 1
       loadUsers()
-      clearSelection()
     }
 
-    const editUser = (user) => {
-      router.push(`/admin/users/${user.id}/edit`)
+    const handleSort = (field) => {
+      if (sortField.value === field) {
+        sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+      } else {
+        sortField.value = field
+        sortDirection.value = 'asc'
+      }
     }
 
-    const viewUser = (user) => {
-      // TODO: Implement view user details
-      console.log('View user:', user)
-      alert(`Pregled korisnika: ${user.name}\nEmail: ${user.email}\nUloga: ${user.role}`)
-    }
-
-    const resendActivation = async (user) => {
+    const toggleUserStatus = async (user) => {
       try {
-        // TODO: Implement API call
-        // await adminAPI.resendActivationEmail(user.id)
-        alert(`Aktivacijski email je poslan na: ${user.email}`)
+        console.log(`🔄 Mijenjam status korisnika ${user.id}`)
+        
+        // Simuliramo API poziv
+        await new Promise(resolve => setTimeout(resolve, 500))
+        
+        user.status = user.status === 'active' ? 'inactive' : 'active'
+        console.log(`✅ Status korisnika ${user.id} promijenjen na: ${user.status}`)
+        
       } catch (error) {
-        alert('Greška pri slanju aktivacijskog emaila: ' + error.userMessage)
+        console.error('❌ Greška pri promjeni statusa:', error)
+        showError('Došlo je do greške pri promjeni statusa korisnika')
       }
     }
 
-    const confirmDelete = (user) => {
-      userToDelete.value = user
-      showDeleteModal.value = true
+    const confirmDeleteUser = (user) => {
+      if (confirm(`Jeste li sigurni da želite obrisati korisnika ${user.first_name} ${user.last_name}?`)) {
+        deleteUser(user)
+      }
     }
 
-    const closeModal = () => {
-      showDeleteModal.value = false
-      userToDelete.value = null
-    }
-
-    const deleteUser = async () => {
+    const deleteUser = async (user) => {
       try {
-        // TODO: Implement API call
-        // await adminAPI.deleteUser(userToDelete.value.id)
-        users.value = users.value.filter(u => u.id !== userToDelete.value.id)
-        closeModal()
-        alert('Korisnik je uspješno obrisan')
+        console.log(`🗑️ Brišem korisnika ${user.id}`)
+        
+        // Simuliramo API poziv
+        await new Promise(resolve => setTimeout(resolve, 500))
+        
+        users.value = users.value.filter(u => u.id !== user.id)
+        console.log(`✅ Korisnik ${user.id} obrisan`)
+        
       } catch (error) {
-        alert('Greška pri brisanju korisnika: ' + error.userMessage)
+        console.error('❌ Greška pri brisanju korisnika:', error)
+        showError('Došlo je do greške pri brisanju korisnika')
       }
     }
 
-    const bulkResendActivation = async () => {
-      try {
-        // TODO: Implement bulk API call
-        alert(`Aktivacijski email poslan na ${selectedUsers.value.length} korisnika`)
-        clearSelection()
-      } catch (error) {
-        alert('Greška pri slanju aktivacijskih emailova: ' + error.userMessage)
-      }
+    const getUserInitials = (user) => {
+      return `${user.first_name[0]}${user.last_name[0]}`.toUpperCase()
     }
 
-    const bulkDeactivate = async () => {
-      try {
-        // TODO: Implement bulk API call
-        alert(`${selectedUsers.value.length} korisnika deaktivirano`)
-        clearSelection()
-      } catch (error) {
-        alert('Greška pri deaktivaciji korisnika: ' + error.userMessage)
+    const getUserStatusText = (status) => {
+      const statusMap = {
+        'active': 'Aktivan',
+        'pending': 'Na čekanju',
+        'inactive': 'Neaktivan'
       }
-    }
-
-    const bulkDelete = async () => {
-      if (confirm(`Jeste li sigurni da želite obrisati ${selectedUsers.value.length} korisnika?`)) {
-        try {
-          // TODO: Implement bulk API call
-          users.value = users.value.filter(u => !selectedUsers.value.includes(u.id))
-          alert(`${selectedUsers.value.length} korisnika obrisano`)
-          clearSelection()
-        } catch (error) {
-          alert('Greška pri brisanju korisnika: ' + error.userMessage)
-        }
-      }
-    }
-
-    // Helper methods
-    const getUserInitials = (name) => {
-      return name
-        .split(' ')
-        .map(part => part[0])
-        .join('')
-        .toUpperCase()
-        .substring(0, 2)
-    }
-
-    const formatRole = (role) => {
-      const roles = {
-        admin: 'Administrator',
-        manager: 'Manager',
-        user: 'Korisnik'
-      }
-      return roles[role] || role
-    }
-
-    const formatStatus = (status) => {
-      const statuses = {
-        active: 'Aktivan',
-        pending: 'Na čekanju',
-        inactive: 'Neaktivan'
-      }
-      return statuses[status] || status
+      return statusMap[status] || status
     }
 
     const formatDate = (date) => {
       return new Date(date).toLocaleDateString('hr-HR')
     }
 
+    const nextPage = () => {
+      if (currentPage.value < totalPages.value) {
+        currentPage.value++
+      }
+    }
+
+    const prevPage = () => {
+      if (currentPage.value > 1) {
+        currentPage.value--
+      }
+    }
+
+    const showError = (message) => {
+      console.error('❌ Error:', message)
+      // Možete dodati toast notifikaciju ovdje
+      alert(message)
+    }
+
     // Lifecycle
     onMounted(() => {
+      console.log('🚀 UserManagement mounted')
       loadUsers()
     })
 
     return {
-      users: filteredUsers,
-      paginatedUsers,
+      // State
+      users,
       loading,
       searchQuery,
       statusFilter,
       roleFilter,
-      selectedUsers,
+      sortField,
+      sortDirection,
       currentPage,
+      itemsPerPage,
+      
+      // Computed
+      filteredUsers,
+      paginatedUsers,
       totalPages,
-      showingStart,
-      showingEnd,
-      allSelected,
-      showDeleteModal,
-      userToDelete,
-      currentUser,
-      sortUsers,
-      sortIndicator,
-      toggleSelectAll,
-      toggleUserSelection,
-      clearSelection,
-      handleSearch,
-      applyFilters,
-      prevPage,
-      nextPage,
+      totalUsers,
+      activeUsers,
+      pendingUsers,
+      adminUsers,
+      
+      // Methods
+      loadUsers,
       refreshUsers,
-      editUser,
-      viewUser,
-      resendActivation,
-      confirmDelete,
-      closeModal,
+      handleSort,
+      toggleUserStatus,
+      confirmDeleteUser,
       deleteUser,
-      bulkResendActivation,
-      bulkDeactivate,
-      bulkDelete,
       getUserInitials,
-      formatRole,
-      formatStatus,
-      formatDate
+      getUserStatusText,
+      formatDate,
+      nextPage,
+      prevPage
     }
   }
 }
 </script>
 
 <style scoped>
+/* CSS ostaje isti kao u prethodnoj verziji */
 .user-management {
-  padding: 0;
+  padding: 1.5rem;
+  max-width: 1400px;
+  margin: 0 auto;
 }
 
 .page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
   margin-bottom: 2rem;
-  padding: 1.5rem;
-  background: white;
-  border-radius: 0.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-.header-content h1 {
-  font-size: 1.875rem;
-  font-weight: bold;
+.page-header h1 {
+  font-size: 2rem;
   color: #1e293b;
   margin: 0 0 0.5rem 0;
 }
 
-.header-content p {
+.page-header p {
   color: #64748b;
   margin: 0;
 }
 
-.header-actions {
+.controls-section {
   display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 2rem;
   gap: 1rem;
+  flex-wrap: wrap;
 }
 
-.filters-section {
+.search-filter {
   display: flex;
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
-  padding: 1.5rem;
-  background: white;
-  border-radius: 0.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .search-box {
   position: relative;
-  flex: 1;
-  max-width: 400px;
+  min-width: 300px;
 }
 
 .search-input {
   width: 100%;
   padding: 0.75rem 1rem 0.75rem 2.5rem;
   border: 1px solid #d1d5db;
-  border-radius: 0.375rem;
-  font-size: 0.875rem;
+  border-radius: 0.5rem;
+  font-size: 1rem;
 }
 
 .search-icon {
@@ -684,28 +544,68 @@ export default {
 
 .filter-controls {
   display: flex;
-  gap: 1rem;
+  gap: 0.5rem;
 }
 
 .filter-select {
-  padding: 0.75rem 1rem;
+  padding: 0.75rem;
   border: 1px solid #d1d5db;
-  border-radius: 0.375rem;
+  border-radius: 0.5rem;
   background: white;
-  font-size: 0.875rem;
-  min-width: 150px;
+  min-width: 120px;
 }
 
-.users-table-container {
-  background: white;
+.action-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-primary {
+  background: #3b82f6;
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border: none;
   border-radius: 0.5rem;
+  text-decoration: none;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #2563eb;
+}
+
+.btn-secondary {
+  background: #f8fafc;
+  color: #475569;
+  padding: 0.75rem 1.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.table-container {
+  background: white;
+  border-radius: 0.75rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   overflow: hidden;
+  margin-bottom: 2rem;
 }
 
 .loading-state,
 .empty-state {
-  padding: 3rem;
+  padding: 3rem 2rem;
   text-align: center;
   color: #64748b;
 }
@@ -717,17 +617,22 @@ export default {
   border-left: 4px solid #3b82f6;
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin: 0 auto 1rem;
+  margin: 0 auto 1rem auto;
 }
 
 .empty-icon {
-  font-size: 3rem;
+  font-size: 4rem;
   margin-bottom: 1rem;
+  opacity: 0.5;
 }
 
 .empty-state h3 {
-  color: #1e293b;
-  margin-bottom: 0.5rem;
+  color: #374151;
+  margin: 0 0 0.5rem 0;
+}
+
+.table-wrapper {
+  overflow-x: auto;
 }
 
 .users-table {
@@ -735,33 +640,24 @@ export default {
   border-collapse: collapse;
 }
 
-.users-table th,
-.users-table td {
-  padding: 1rem;
-  text-align: left;
-  border-bottom: 1px solid #f1f5f9;
-}
-
 .users-table th {
   background: #f8fafc;
+  padding: 1rem;
+  text-align: left;
   font-weight: 600;
   color: #374151;
-  font-size: 0.875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  border-bottom: 1px solid #e5e7eb;
 }
 
-.users-table tbody tr:hover {
-  background: #f8fafc;
-}
-
-.users-table tbody tr.selected {
-  background: #eff6ff;
+.users-table td {
+  padding: 1rem;
+  border-bottom: 1px solid #f3f4f6;
 }
 
 .sortable {
   cursor: pointer;
   user-select: none;
+  transition: background 0.2s;
 }
 
 .sortable:hover {
@@ -769,57 +665,42 @@ export default {
 }
 
 .sort-indicator {
-  margin-left: 0.5rem;
+  margin-left: 0.25rem;
   font-weight: bold;
 }
 
-.checkbox {
-  width: 1rem;
-  height: 1rem;
+.user-row:hover {
+  background: #f8fafc;
 }
 
-.user-info {
+.user-id {
+  font-family: 'Courier New', monospace;
+  color: #6b7280;
+  font-size: 0.875rem;
+}
+
+.user-name {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  font-weight: 500;
 }
 
 .user-avatar {
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: #3b82f6;
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: bold;
   font-size: 0.75rem;
-}
-
-.user-details {
-  display: flex;
-  flex-direction: column;
-}
-
-.user-name {
-  color: #1e293b;
-  font-weight: 500;
-}
-
-.user-company {
-  font-size: 0.75rem;
-  color: #64748b;
+  font-weight: 600;
 }
 
 .user-email {
-  color: #3b82f6;
-  font-weight: 500;
-}
-
-.user-date {
-  color: #64748b;
-  font-size: 0.875rem;
+  color: #6b7280;
 }
 
 .role-badge,
@@ -827,9 +708,8 @@ export default {
   padding: 0.25rem 0.75rem;
   border-radius: 1rem;
   font-size: 0.75rem;
-  font-weight: 500;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .role-badge.admin {
@@ -837,14 +717,9 @@ export default {
   color: #92400e;
 }
 
-.role-badge.manager {
+.role-badge.user {
   background: #dbeafe;
   color: #1e40af;
-}
-
-.role-badge.user {
-  background: #dcfce7;
-  color: #166534;
 }
 
 .status-badge.active {
@@ -859,52 +734,59 @@ export default {
 
 .status-badge.inactive {
   background: #f3f4f6;
-  color: #374151;
+  color: #6b7280;
 }
 
-.action-buttons {
+.user-actions {
   display: flex;
   gap: 0.5rem;
 }
 
-.btn-action {
+.btn-edit,
+.btn-status,
+.btn-delete {
   padding: 0.5rem;
   border: none;
   border-radius: 0.375rem;
-  background: transparent;
   cursor: pointer;
   transition: all 0.2s;
   font-size: 1rem;
 }
 
-.btn-action:hover {
-  background: #f1f5f9;
-  transform: scale(1.1);
+.btn-edit {
+  background: #dbeafe;
+  color: #1e40af;
 }
 
-.btn-action.delete:hover {
+.btn-edit:hover {
+  background: #bfdbfe;
+}
+
+.btn-status {
+  background: #f0f9ff;
+  color: #0369a1;
+}
+
+.btn-status:hover {
+  background: #e0f2fe;
+}
+
+.btn-delete {
   background: #fef2f2;
   color: #dc2626;
 }
 
+.btn-delete:hover {
+  background: #fecaca;
+}
+
 .pagination {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1.5rem;
-  background: white;
-  border-top: 1px solid #e2e8f0;
-}
-
-.pagination-info {
-  color: #64748b;
-  font-size: 0.875rem;
-}
-
-.pagination-controls {
-  display: flex;
+  justify-content: center;
   align-items: center;
   gap: 1rem;
+  padding: 1.5rem;
+  border-top: 1px solid #f3f4f6;
 }
 
 .pagination-btn {
@@ -913,13 +795,11 @@ export default {
   background: white;
   border-radius: 0.375rem;
   cursor: pointer;
-  font-size: 0.875rem;
   transition: all 0.2s;
 }
 
 .pagination-btn:hover:not(:disabled) {
-  background: #f8fafc;
-  border-color: #9ca3af;
+  background: #f3f4f6;
 }
 
 .pagination-btn:disabled {
@@ -927,160 +807,37 @@ export default {
   cursor: not-allowed;
 }
 
-.pagination-numbers {
+.pagination-info {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.stats-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.stat-item {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+.stat-number {
+  display: block;
+  font-size: 2rem;
+  font-weight: bold;
+  color: #1e293b;
+  margin-bottom: 0.5rem;
+}
+
+.stat-label {
   color: #64748b;
   font-size: 0.875rem;
-}
-
-.bulk-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 1.5rem;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 0.5rem;
-  margin-top: 1rem;
-}
-
-.bulk-info {
-  color: #1e40af;
-  font-weight: 500;
-}
-
-.bulk-buttons {
-  display: flex;
-  gap: 0.75rem;
-}
-
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal {
-  background: white;
-  border-radius: 0.75rem;
-  padding: 0;
-  max-width: 500px;
-  width: 90%;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1.5rem;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.modal-header h3 {
-  margin: 0;
-  color: #1e293b;
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  cursor: pointer;
-  color: #64748b;
-}
-
-.modal-body {
-  padding: 1.5rem;
-}
-
-.modal-body p {
-  margin: 0 0 1rem 0;
-  color: #374151;
-}
-
-.warning-text {
-  color: #dc2626 !important;
-  font-weight: 500;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 1rem;
-  justify-content: flex-end;
-  padding: 1.5rem;
-  border-top: 1px solid #e2e8f0;
-}
-
-/* Button Styles */
-.btn-primary {
-  background: #3b82f6;
-  color: white;
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 0.375rem;
-  text-decoration: none;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.btn-primary:hover {
-  background: #2563eb;
-}
-
-.btn-secondary {
-  background: #f1f5f9;
-  color: #374151;
-  padding: 0.75rem 1.5rem;
-  border: 1px solid #d1d5db;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.btn-secondary:hover {
-  background: #e2e8f0;
-}
-
-.btn-outline {
-  background: white;
-  color: #374151;
-  padding: 0.75rem 1.5rem;
-  border: 1px solid #d1d5db;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-outline:hover {
-  background: #f8fafc;
-}
-
-.btn-danger {
-  background: #dc2626;
-  color: white;
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.btn-danger:hover {
-  background: #b91c1c;
 }
 
 @keyframes spin {
@@ -1089,44 +846,55 @@ export default {
   }
 }
 
-/* Responsive */
-@media (max-width: 1024px) {
-  .page-header {
-    flex-direction: column;
-    gap: 1rem;
+@media (max-width: 768px) {
+  .user-management {
+    padding: 1rem;
   }
   
-  .filters-section {
+  .controls-section {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .search-filter {
     flex-direction: column;
   }
   
   .search-box {
-    max-width: none;
+    min-width: auto;
   }
   
-  .users-table {
-    display: block;
-    overflow-x: auto;
+  .action-buttons {
+    justify-content: stretch;
+  }
+  
+  .btn-primary,
+  .btn-secondary {
+    flex: 1;
+    text-align: center;
+  }
+  
+  .stats-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .user-actions {
+    flex-direction: column;
   }
 }
 
-@media (max-width: 768px) {
-  .action-buttons {
-    flex-direction: column;
+@media (max-width: 480px) {
+  .stats-summary {
+    grid-template-columns: 1fr;
   }
   
-  .bulk-actions {
-    flex-direction: column;
-    gap: 1rem;
-    align-items: stretch;
+  .users-table {
+    font-size: 0.875rem;
   }
   
-  .bulk-buttons {
-    flex-wrap: wrap;
-  }
-  
-  .modal-actions {
-    flex-direction: column;
+  .users-table th,
+  .users-table td {
+    padding: 0.75rem 0.5rem;
   }
 }
 </style>

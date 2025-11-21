@@ -16,32 +16,8 @@
 
     <!-- Main Content -->
     <main class="container mx-auto px-4 py-8">
-      <transition name="page-fade" mode="out-in">
-        <!-- Homepage -->
-        <HomePage 
-          v-if="showHomepage && !user && !showGlobalLoader" 
-          @go-to-login="goToLogin"
-          @go-to-register="goToRegister" 
-          key="homepage"
-        />
-        
-        <!-- Auth Manager -->
-        <AuthManager 
-          v-else-if="!user && !showGlobalLoader" 
-          :initial-view="authView"
-          @success="handleAuthSuccess"
-          @go-home="goToHome"
-          key="auth"
-        />
-
-        <!-- Dashboard -->
-        <Dashboard 
-          v-else-if="user && !showGlobalLoader" 
-          :user="user"
-          @logout="handleLogout" 
-          key="dashboard"
-        />
-      </transition>
+      <!-- PROMJENA: Koristimo router-view umjesto ručnog upravljanja komponentama -->
+      <router-view></router-view>
     </main>
 
     <!-- Globalna notifikacija -->
@@ -74,23 +50,18 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import api, { authHelper } from './services/api'
+import { authHelper } from './services/api'
 
 // Components
 import AppHeader from './components/AppHeader.vue'
-import HomePage from './components/HomePage.vue'
-import AuthManager from './components/AuthManager.vue'
 import Loader from './components/Loader.vue'
-import Dashboard from './components/Dashboard.vue'
 
 const router = useRouter()
 const route = useRoute()
 
 // State
 const user = ref(null)
-const showHomepage = ref(true)
 const showGlobalLoader = ref(false)
-const authView = ref('login')
 const globalMessage = ref('')
 const globalMessageType = ref('success')
 
@@ -112,22 +83,17 @@ const clearGlobalMessage = () => {
   globalMessageType.value = 'success'
 }
 
-const goToLogin = () => {
-  showHomepage.value = false
-  authView.value = 'login'
-  router.push('/login').catch(() => {}) // PROMJENA: Uklonio query parametar
-}
-
-const goToRegister = () => {
-  showHomepage.value = false
-  authView.value = 'register'
-  router.push('/register').catch(() => {}) // PROMJENA: Uklonio query parametar
-}
-
 const goToHome = () => {
-  showHomepage.value = true
-  authView.value = 'login'
   router.push('/').catch(() => {})
+}
+
+const handleLogout = () => {
+  authHelper.clearAuth()
+  user.value = null
+  showGlobalMessage('Uspješno ste se odjavili', 'success')
+  console.log('✅ User logged out')
+  
+  goToHome()
 }
 
 const handleAuthSuccess = async (authData) => {
@@ -161,6 +127,9 @@ const handleAuthSuccess = async (authData) => {
     
     console.log('✅ Auth success završeno, prebacujem na dashboard...')
     
+    // Preusmjeri na dashboard
+    router.push('/dashboard')
+    
   } catch (error) {
     console.error('Auth success handling error:', error)
     showGlobalMessage('Greška pri prijavi', 'error')
@@ -171,15 +140,6 @@ const handleAuthSuccess = async (authData) => {
     loaderMessage.value = 'Učitavanje...'
     loaderSubMessage.value = 'Prijavljujemo vas u sustav'
   }
-}
-
-const handleLogout = () => {
-  authHelper.clearAuth()
-  user.value = null
-  showGlobalMessage('Uspješno ste se odjavili', 'success')
-  console.log('✅ User logged out')
-  
-  goToHome()
 }
 
 // Check authentication status on app start
@@ -197,29 +157,19 @@ const checkAuthStatus = () => {
   }
 }
 
-// Watchers - PROMJENA: Uklonio query watcher jer sada koristimo direktne rute
-watch(
-  () => route.path,
-  (newPath) => {
-    console.log('📍 Route changed:', newPath)
-    if (newPath === '/login') {
-      showHomepage.value = false
-      authView.value = 'login'
-    } else if (newPath === '/register') {
-      showHomepage.value = false
-      authView.value = 'register'
-    } else if (newPath === '/') {
-      showHomepage.value = true
-      authView.value = 'login'
-    }
-  },
-  { immediate: true }
-)
+// Listen for auth success events from child components
+const setupAuthListener = () => {
+  // Ovo će biti pozvano iz AuthManager komponente
+  window.addEventListener('auth-success', (event) => {
+    handleAuthSuccess(event.detail)
+  })
+}
 
 // Lifecycle
 onMounted(() => {
   console.log('🚀 App.vue mounted')
   checkAuthStatus()
+  setupAuthListener()
   
   // Listen for storage changes (logout from other tabs)
   window.addEventListener('storage', (event) => {
@@ -234,6 +184,7 @@ onMounted(() => {
 import { onUnmounted } from 'vue'
 onUnmounted(() => {
   window.removeEventListener('storage', handleLogout)
+  window.removeEventListener('auth-success', handleAuthSuccess)
 })
 </script>
 

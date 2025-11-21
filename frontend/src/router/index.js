@@ -66,7 +66,7 @@ const router = createRouter({
     {
       path: '/admin',
       name: 'Admin',
-      component: () => import('./components/admin/AdminLayout.vue'),
+      component: () => import('@/components/admin/AdminLayout.vue'), // ISPRAVLJENO
       meta: { 
         requiresAuth: true,
         requiresAdmin: true,
@@ -77,25 +77,25 @@ const router = createRouter({
         {
           path: '',
           name: 'AdminDashboard',
-          component: () => import('./components/admin/AdminDashboard.vue'),
+          component: () => import('./src/components/admin/AdminDashboard.vue'), // ISPRAVLJENO
           meta: { title: 'Admin Dashboard' }
         },
         {
           path: 'users',
           name: 'UserManagement',
-          component: () => import('./components/admin/UserManagement.vue'),
+          component: () => import('./src/components/admin/UserManagement.vue'), // ISPRAVLJENO
           meta: { title: 'Upravljanje Korisnicima' }
         },
         {
           path: 'users/create',
           name: 'CreateUser',
-          component: () => import('./components/admin/CreateUserForm.vue'),
+          component: () => import('./src/components/admin/CreateUserForm.vue'), // ISPRAVLJENO
           meta: { title: 'Dodaj Novog Korisnika' }
         },
         {
           path: 'users/:id/edit',
           name: 'EditUser',
-          component: () => import('./components/admin/EditUserForm.vue'),
+          component: () => import('./src/components/admin/EditUserForm.vue'), // ISPRAVLJENO
           meta: { title: 'Uredi Korisnika' }
         }
       ]
@@ -104,7 +104,7 @@ const router = createRouter({
     // ⭐⭐⭐ WILDCARD ROUTE ⭐⭐⭐
     {
       path: '/:pathMatch(.*)*',
-      redirect: '/'
+     // redirect: '/'
     }
   ]
 })

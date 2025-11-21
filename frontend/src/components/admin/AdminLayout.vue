@@ -1,6 +1,19 @@
 <!-- src/components/admin/AdminLayout.vue -->
 <template>
   <div class="admin-layout">
+    <!-- Debug Banner -->
+    <div v-if="showDebug" style="background: #dc2626; color: white; padding: 12px 20px; position: fixed; top: 0; left: 0; right: 0; z-index: 10000; display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <strong>🔧 ADMIN LAYOUT JE AKTIVAN - DEBUG MODE</strong>
+        <div style="font-size: 12px; margin-top: 4px;">
+          User: {{ user?.name }} | Role: {{ user?.role }} | Auth: {{ isAuthenticated }} | Admin: {{ isAdmin }}
+        </div>
+      </div>
+      <button @click="showDebug = false" style="background: white; color: #dc2626; border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;">
+        Sakrij debug
+      </button>
+    </div>
+
     <!-- Admin Header -->
     <header class="admin-header">
       <div class="header-content">
@@ -9,12 +22,15 @@
           <nav class="main-nav">
             <router-link to="/admin" class="nav-link">Dashboard</router-link>
             <router-link to="/admin/users" class="nav-link">Korisnici</router-link>
+            <router-link to="/admin/settings" class="nav-link">Postavke</router-link>
           </nav>
         </div>
         <div class="header-right">
           <div class="user-menu">
             <span class="user-info">{{ user?.name }} ({{ user?.email }})</span>
-            <button @click="logout" class="logout-btn">Odjava</button>
+            <button @click="logout" class="logout-btn" :disabled="loading">
+              {{ loading ? 'Odjavljivanje...' : 'Odjava' }}
+            </button>
           </div>
         </div>
       </div>
@@ -45,6 +61,13 @@
           >
             ➕ Dodaj Korisnika
           </router-link>
+          <router-link 
+            to="/admin/settings" 
+            class="sidebar-link"
+            :class="{ active: $route.name === 'AdminSettings' }"
+          >
+            ⚙️ Postavke
+          </router-link>
         </nav>
       </aside>
 
@@ -67,6 +90,7 @@
     <!-- Loading Overlay -->
     <div v-if="loading" class="loading-overlay">
       <div class="loading-spinner"></div>
+      <p>Učitavanje...</p>
     </div>
   </div>
 </template>
@@ -74,7 +98,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { authHelper, authAPI } from '@/services/api'
+import { authHelper, authAPI } from '@/services/api'  // Promijenjeno na @/
 
 export default {
   name: 'AdminLayout',
@@ -83,13 +107,18 @@ export default {
     const route = useRoute()
     const loading = ref(false)
     const user = ref(authHelper.getUser())
+    const showDebug = ref(true)
+
+    const isAuthenticated = computed(() => authHelper.isAuthenticated())
+    const isAdmin = computed(() => authHelper.isAdmin())
 
     const pageTitle = computed(() => {
       const titleMap = {
         'AdminDashboard': 'Admin Dashboard',
         'UserManagement': 'Upravljanje Korisnicima',
         'CreateUser': 'Dodaj Novog Korisnika',
-        'EditUser': 'Uredi Korisnika'
+        'EditUser': 'Uredi Korisnika',
+        'AdminSettings': 'Admin Postavke'
       }
       return titleMap[route.name] || 'Admin Panel'
     })
@@ -101,6 +130,7 @@ export default {
         router.push('/login')
       } catch (error) {
         console.error('Greška pri odjavi:', error)
+        // Fallback: clear auth and redirect
         authHelper.clearAuth()
         router.push('/login')
       } finally {
@@ -110,14 +140,33 @@ export default {
 
     // Provjera admin privilegija
     onMounted(() => {
-      if (!authHelper.isAuthenticated() || !authHelper.isAdmin()) {
-        router.push('/dashboard')
+      console.log('🔐 AdminLayout mounted - Auth status:', {
+        authenticated: isAuthenticated.value,
+        admin: isAdmin.value,
+        user: user.value
+      })
+
+      if (!isAuthenticated.value) {
+        console.log('🚫 Nije prijavljen, redirect na login')
+        router.push('/login')
+        return
       }
+
+      if (!isAdmin.value) {
+        console.log('🚫 Nije admin, redirect na dashboard')
+        router.push('/dashboard')
+        return
+      }
+
+      console.log('✅ Admin pristup odobren')
     })
 
     return {
       loading,
       user,
+      showDebug,
+      isAuthenticated,
+      isAdmin,
       pageTitle,
       logout
     }
@@ -136,6 +185,9 @@ export default {
   border-bottom: 1px solid #e2e8f0;
   padding: 0 2rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .header-content {
@@ -200,8 +252,13 @@ export default {
   transition: background 0.2s;
 }
 
-.logout-btn:hover {
+.logout-btn:hover:not(:disabled) {
   background: #dc2626;
+}
+
+.logout-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .admin-main {
@@ -214,6 +271,10 @@ export default {
   background: white;
   border-right: 1px solid #e2e8f0;
   padding: 1.5rem 0;
+  position: sticky;
+  top: 64px;
+  height: calc(100vh - 64px);
+  overflow-y: auto;
 }
 
 .sidebar-nav {
@@ -247,6 +308,7 @@ export default {
 .admin-content {
   flex: 1;
   padding: 2rem;
+  overflow-y: auto;
 }
 
 .content-header {
@@ -279,6 +341,7 @@ export default {
   border-radius: 0.5rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   min-height: 400px;
+  padding: 2rem;
 }
 
 .loading-overlay {
@@ -289,6 +352,7 @@ export default {
   bottom: 0;
   background: rgba(255, 255, 255, 0.8);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   z-index: 1000;
@@ -301,6 +365,12 @@ export default {
   border-left: 4px solid #3b82f6;
   border-radius: 50%;
   animation: spin 1s linear infinite;
+  margin-bottom: 1rem;
+}
+
+.loading-overlay p {
+  color: #64748b;
+  margin: 0;
 }
 
 @keyframes spin {
@@ -319,6 +389,8 @@ export default {
     width: 100%;
     border-right: none;
     border-bottom: 1px solid #e2e8f0;
+    height: auto;
+    position: static;
   }
   
   .sidebar-nav {
@@ -328,6 +400,21 @@ export default {
   
   .admin-content {
     padding: 1rem;
+  }
+  
+  .content-body {
+    padding: 1rem;
+  }
+  
+  .header-content {
+    flex-direction: column;
+    height: auto;
+    padding: 1rem 0;
+    gap: 1rem;
+  }
+  
+  .main-nav {
+    order: -1;
   }
 }
 </style>

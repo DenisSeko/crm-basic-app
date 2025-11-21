@@ -1,6 +1,13 @@
 <!-- src/components/admin/AdminDashboard.vue -->
 <template>
   <div class="admin-dashboard">
+    <div class="debug-info" style="background: #f0f8ff; padding: 1rem; margin-bottom: 1rem; border-radius: 0.5rem;">
+      <h3>🔧 Debug Info</h3>
+      <p><strong>Komponenta:</strong> AdminDashboard.vue</p>
+      <p><strong>Status:</strong> {{ loading ? 'Učitavam...' : 'Učitano' }}</p>
+      <p><strong>Podaci:</strong> {{ JSON.stringify(stats) }}</p>
+    </div>
+
     <div class="welcome-section">
       <h1>Dobrodošli u Admin Panel</h1>
       <p>Upravljajte korisnicima i postavkama CRM sustava</p>
@@ -86,11 +93,12 @@
 
 <script>
 import { ref, onMounted } from 'vue'
-import { adminAPI } from '@/services/api'
 
 export default {
   name: 'AdminDashboard',
   setup() {
+    console.log('🔧 AdminDashboard setup() pokrenut!')
+    
     const stats = ref({
       totalUsers: 0,
       activeUsers: 0,
@@ -103,9 +111,10 @@ export default {
 
     const loadDashboardData = async () => {
       try {
+        console.log('🔄 Učitavam admin dashboard podatke...')
         loading.value = true
-        // Ovdje ćemo kasnije dodati prave API pozive
-        // Za sada koristimo mock podatke
+        
+        // Privremeno koristimo mock podatke dok ne popravimo adminAPI
         await new Promise(resolve => setTimeout(resolve, 1000))
         
         stats.value = {
@@ -132,14 +141,17 @@ export default {
             timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2) // 2 sata prije
           }
         ]
+        
+        console.log('✅ Admin dashboard podaci učitani:', stats.value)
       } catch (error) {
-        console.error('Greška pri učitavanju dashboard podataka:', error)
+        console.error('❌ Greška pri učitavanju dashboard podataka:', error)
       } finally {
         loading.value = false
       }
     }
 
     const refreshData = () => {
+      console.log('🔄 Osvježavam podatke...')
       loadDashboardData()
     }
 
@@ -156,6 +168,8 @@ export default {
     }
 
     onMounted(() => {
+      console.log('🚀 AdminDashboard mounted() - komponenta je montirana!')
+      console.log('📍 Route:', window.location.pathname)
       loadDashboardData()
     })
 
@@ -166,6 +180,9 @@ export default {
       refreshData,
       formatTime
     }
+  },
+  mounted() {
+    console.log('🎯 AdminDashboard Vue 2 mounted() hook')
   }
 }
 </script>
