@@ -5,9 +5,25 @@ import { pool } from '../database/config.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 import crypto from 'crypto';
 
-const router = express.Router();
+// EmailService import s boljim error handlingom
+let emailService;
+try {
+  emailService = await import('../services/emailService.js').then(module => module.default);
+  console.log('✅ EmailService uspješno uvezen');
+} catch (error) {
+  console.error('❌ Greška pri uvoženju EmailService:', error.message);
+  emailService = null;
+}
 
 console.log('🔧 Admin Routes loading...');
+console.log('📧 EmailService status:', {
+  available: !!emailService,
+  hasTransporter: emailService?.transporter ? 'YES' : 'NO',
+  hasTestEmail: typeof emailService?.sendTestEmail === 'function',
+  hasActivationEmail: typeof emailService?.sendActivationEmail === 'function'
+});
+
+const router = express.Router();
 
 // Validation rules for user creation
 const createUserValidation = [
@@ -30,28 +46,136 @@ const createUserValidation = [
     .withMessage('Uloga mora biti admin, manager ili user')
 ];
 
-// Helper function za slanje emaila
+// Helper function za slanje emaila PREKO PRAVOG EMAIL SERVISA
 async function sendActivationEmail(emailData) {
   try {
-    const { to, activation_link, user_name, admin_name } = emailData;
+    const { to, activation_token, user_name, admin_name } = emailData;
     
-    console.log('📧 Sending activation email to:', to);
+    console.log('📧 Sending REAL activation email to:', to);
+    console.log('🔑 Activation token:', activation_token);
+    console.log('👤 User name:', user_name);
     
-    // Ovdje integrirajte svoj email service
-    // Za sada ćemo samo loggati
-    console.log('✅ Activation email prepared:', {
+    if (!emailService) {
+      console.error('❌ EmailService nije dostupan');
+      return false;
+    }
+    
+    if (!emailService.sendActivationEmail) {
+      console.error('❌ sendActivationEmail metoda nije dostupna');
+      return false;
+    }
+    
+    // Pozovite pravi EmailService
+    const emailSent = await emailService.sendActivationEmail(
       to,
-      activation_link,
-      user_name,
-      admin_name
-    });
+      activation_token,
+      user_name
+    );
     
-    return true;
+    console.log('✅ Email service response:', emailSent);
+    return emailSent;
+    
   } catch (error) {
     console.error('❌ Email sending error:', error);
     return false;
   }
 }
+
+// ✅ HEALTH CHECK ENDPOINT (PUBLIC)
+router.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Admin routes are working',
+    timestamp: new Date().toISOString(),
+    services: {
+      email_service: !!emailService,
+      database: true,
+      authentication: true
+    },
+    endpoints: [
+      'GET /api/admin/health',
+      'GET /api/admin/test-email',
+      'GET /api/admin/users (AUTH)',
+      'POST /api/admin/users (AUTH)',
+      'GET /api/admin/users/:id (AUTH)',
+      'PUT /api/admin/users/:id (AUTH)',
+      'DELETE /api/admin/users/:id (AUTH)'
+    ]
+  });
+});
+
+// ✅ PUBLIC TEST ENDPOINT - Test EmailService direktno
+router.get('/test-email', async (req, res) => {
+  try {
+    console.log('🧪 PUBLIC Testing EmailService directly...');
+    
+    // Provjeri je li EmailService dostupan
+    if (!emailService) {
+      return res.status(500).json({
+        success: false,
+        error: 'EmailService nije dostupan',
+        solution: 'Provjerite da li je EmailService.js u services folderu'
+      });
+    }
+    
+    console.log('🔧 EmailService status:', {
+      hasTransporter: !!emailService.transporter,
+      hasTestEmail: typeof emailService.sendTestEmail === 'function',
+      hasActivationEmail: typeof emailService.sendActivationEmail === 'function'
+    });
+    
+    let testResults = {};
+    
+    // Test 1: Test email
+    if (emailService.sendTestEmail) {
+      console.log('📤 Sending test email...');
+      testResults.test_email = await emailService.sendTestEmail();
+    } else {
+      testResults.test_email = 'sendTestEmail metoda nije dostupna';
+    }
+    
+    // Test 2: Activation email (opcionalno)
+    if (emailService.sendActivationEmail) {
+      console.log('📤 Sending test activation email...');
+      testResults.activation_email = await emailService.sendActivationEmail(
+        'test@example.com',
+        'test-activation-token-' + Date.now(),
+        'Test Korisnik'
+      );
+    } else {
+      testResults.activation_email = 'sendActivationEmail metoda nije dostupna';
+    }
+    
+    res.json({
+      success: true,
+      message: 'Test emailovi pokrenuti',
+      results: testResults,
+      mailcatcher_url: 'http://localhost:1080',
+      next_steps: [
+        '1. Otvorite http://localhost:1080 u browseru',
+        '2. Provjerite ima li novih emailova',
+        '3. Ako nema, provjerite backend logove za greške'
+      ],
+      debug_info: {
+        email_service_available: !!emailService,
+        node_env: process.env.NODE_ENV,
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Test email error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Greška pri testiranju email servisa: ' + error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      debug: {
+        email_service: !!emailService,
+        error_name: error.name
+      }
+    });
+  }
+});
 
 // ✅ 1. GET /api/admin/users - Get all users (Admin only)
 router.get('/users', authenticateToken, requireRole(['admin']), async (req, res) => {
@@ -120,7 +244,7 @@ router.post('/users', authenticateToken, requireRole(['admin']), createUserValid
     } = req.body;
 
     const full_name = `${first_name} ${last_name}`;
-    const username = email.split('@')[0]; // Generiraj username iz emaila
+    const username = email.split('@')[0];
 
     console.log('📝 Creating user:', { email, full_name, role });
 
@@ -138,7 +262,7 @@ router.post('/users', authenticateToken, requireRole(['admin']), createUserValid
       });
     }
 
-    // 2. Kreiraj novog korisnika (bez passworda - email_only auth)
+    // 2. Kreiraj novog korisnika
     const userResult = await client.query(`
       INSERT INTO users (
         username, email, first_name, last_name, full_name,
@@ -151,12 +275,12 @@ router.post('/users', authenticateToken, requireRole(['admin']), createUserValid
     `, [
       username, email, first_name, last_name, full_name,
       phone_mobile, phone_office, company, address, department,
-      'email_only', // auth_method
+      'email_only',
       role,
-      'pending_verification', // status
-      false, // email_verified
+      'pending_verification',
+      false,
       can_export, can_manage_clients, can_view_reports,
-      req.user.id // created_by
+      req.user.id
     ]);
 
     const newUser = userResult.rows[0];
@@ -164,10 +288,10 @@ router.post('/users', authenticateToken, requireRole(['admin']), createUserValid
 
     let activationData = null;
 
-    // 3. Ako je odabrano, pošalji aktivacijski email
+    // 3. Ako je odabrano, pošalji aktivacijski email PREKO PRAVOG EMAIL SERVISA
     if (send_activation_email) {
       const verificationToken = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 sata
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
       // Spremi token u verification_tokens tabelu
       await client.query(`
@@ -175,23 +299,22 @@ router.post('/users', authenticateToken, requireRole(['admin']), createUserValid
         VALUES ($1, $2, $3, $4)
       `, [newUser.id, verificationToken, 'account_activation', expiresAt]);
 
-      // Generiraj aktivacijski link
-      const activationLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-account?token=${verificationToken}&email=${encodeURIComponent(email)}`;
-      
-      // Pošalji email
+      console.log('🔑 Activation token generated:', verificationToken);
+
+      // POŠALJI EMAIL PREKO PRAVOG EMAIL SERVISA
       const emailSent = await sendActivationEmail({
         to: email,
-        activation_link: activationLink,
+        activation_token: verificationToken,
         user_name: full_name,
         admin_name: req.user.full_name || req.user.username
       });
 
       activationData = {
         email_sent: emailSent,
-        activation_link: activationLink
+        activation_token: verificationToken
       };
 
-      console.log('📧 Activation email sent:', emailSent);
+      console.log('📧 Activation email sent via EmailService:', emailSent);
     }
 
     await client.query('COMMIT');
@@ -222,7 +345,7 @@ router.post('/users', authenticateToken, requireRole(['admin']), createUserValid
     console.error('❌ Admin create user error:', error);
     res.status(500).json({
       success: false,
-      error: 'Greška pri kreiranju korisnika'
+      error: 'Greška pri kreiranju korisnika: ' + error.message
     });
   } finally {
     client.release();
@@ -273,13 +396,12 @@ router.post('/users/:id/resend-activation', authenticateToken, requireRole(['adm
       VALUES ($1, $2, $3, $4)
     `, [userId, verificationToken, 'account_activation', expiresAt]);
 
-    // Generiraj aktivacijski link
-    const activationLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-account?token=${verificationToken}&email=${encodeURIComponent(user.email)}`;
-    
-    // Pošalji email
+    console.log('🔑 New activation token generated:', verificationToken);
+
+    // POŠALJI EMAIL PREKO PRAVOG EMAIL SERVISA
     const emailSent = await sendActivationEmail({
       to: user.email,
-      activation_link: activationLink,
+      activation_token: verificationToken,
       user_name: user.full_name,
       admin_name: req.user.full_name || req.user.username
     });
@@ -294,7 +416,7 @@ router.post('/users/:id/resend-activation', authenticateToken, requireRole(['adm
         to: user.email
       },
       activation: {
-        activation_link: activationLink
+        activation_token: verificationToken
       }
     });
 
@@ -310,12 +432,12 @@ router.post('/users/:id/resend-activation', authenticateToken, requireRole(['adm
   }
 });
 
-// ✅ 4. GET /api/admin/users/:id - Get user by ID
+// ✅ 4. GET /api/admin/users/:id - Get user by ID (NOVA RUTA)
 router.get('/users/:id', authenticateToken, requireRole(['admin']), async (req, res) => {
   try {
     const userId = req.params.id;
     
-    console.log('🔧 Fetching user:', userId);
+    console.log('🔧 [BACKEND] Fetching user by ID:', userId);
 
     const result = await pool.query(`
       SELECT 
@@ -329,22 +451,26 @@ router.get('/users/:id', authenticateToken, requireRole(['admin']), async (req, 
     `, [userId]);
 
     if (result.rows.length === 0) {
+      console.log('❌ [BACKEND] User not found:', userId);
       return res.status(404).json({
         success: false,
         error: 'Korisnik nije pronađen'
       });
     }
 
+    const user = result.rows[0];
+    console.log('✅ [BACKEND] User found:', { id: user.id, email: user.email, name: user.full_name });
+
     res.json({
       success: true,
-      data: result.rows[0]
+      data: user
     });
 
   } catch (error) {
-    console.error('❌ Get user error:', error);
+    console.error('❌ [BACKEND] Get user error:', error);
     res.status(500).json({
       success: false,
-      error: 'Greška pri dohvaćanju korisnika'
+      error: 'Greška pri dohvaćanju korisnika: ' + error.message
     });
   }
 });
@@ -358,27 +484,27 @@ router.put('/users/:id', authenticateToken, requireRole(['admin']), async (req, 
 
     const userId = req.params.id;
     const {
+      name,
+      email,
+      company,
+      role,
       first_name,
       last_name,
       phone_mobile,
       phone_office,
-      company,
       address,
       department,
-      role,
       can_export,
       can_manage_clients,
       can_view_reports,
       status
     } = req.body;
 
-    const full_name = `${first_name} ${last_name}`;
-
-    console.log('🔧 Updating user:', userId);
+    console.log('🔧 [BACKEND] Updating user:', userId, 'with data:', req.body);
 
     // Provjeri da li korisnik postoji
     const userCheck = await client.query(
-      'SELECT id FROM users WHERE id = $1',
+      'SELECT id, email FROM users WHERE id = $1',
       [userId]
     );
 
@@ -390,33 +516,121 @@ router.put('/users/:id', authenticateToken, requireRole(['admin']), async (req, 
       });
     }
 
-    // Update korisnika
-    const result = await client.query(`
-      UPDATE users SET
-        first_name = $1,
-        last_name = $2,
-        full_name = $3,
-        phone_mobile = $4,
-        phone_office = $5,
-        company = $6,
-        address = $7,
-        department = $8,
-        role = $9,
-        can_export = $10,
-        can_manage_clients = $11,
-        can_view_reports = $12,
-        status = $13,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $14
+    // Pripremi podatke za update
+    let updateFields = [];
+    let updateValues = [];
+    let paramCount = 1;
+
+    // Mapiranje polja iz frontenda na backend
+    if (name !== undefined) {
+      // Ako frontend šalje "name", podijeli na first_name i last_name
+      const nameParts = name.split(' ');
+      const first_name = nameParts[0];
+      const last_name = nameParts.slice(1).join(' ') || '';
+      const full_name = name;
+      
+      updateFields.push(`first_name = $${paramCount++}`);
+      updateValues.push(first_name);
+      
+      updateFields.push(`last_name = $${paramCount++}`);
+      updateValues.push(last_name);
+      
+      updateFields.push(`full_name = $${paramCount++}`);
+      updateValues.push(full_name);
+    }
+
+    if (email !== undefined) {
+      updateFields.push(`email = $${paramCount++}`);
+      updateValues.push(email);
+    }
+
+    if (company !== undefined) {
+      updateFields.push(`company = $${paramCount++}`);
+      updateValues.push(company);
+    }
+
+    if (role !== undefined) {
+      updateFields.push(`role = $${paramCount++}`);
+      updateValues.push(role);
+    }
+
+    if (status !== undefined) {
+      updateFields.push(`status = $${paramCount++}`);
+      updateValues.push(status);
+    }
+
+    // Dodaj ostala polja ako su poslana
+    if (first_name !== undefined) {
+      updateFields.push(`first_name = $${paramCount++}`);
+      updateValues.push(first_name);
+    }
+
+    if (last_name !== undefined) {
+      updateFields.push(`last_name = $${paramCount++}`);
+      updateValues.push(last_name);
+    }
+
+    if (phone_mobile !== undefined) {
+      updateFields.push(`phone_mobile = $${paramCount++}`);
+      updateValues.push(phone_mobile);
+    }
+
+    if (phone_office !== undefined) {
+      updateFields.push(`phone_office = $${paramCount++}`);
+      updateValues.push(phone_office);
+    }
+
+    if (address !== undefined) {
+      updateFields.push(`address = $${paramCount++}`);
+      updateValues.push(address);
+    }
+
+    if (department !== undefined) {
+      updateFields.push(`department = $${paramCount++}`);
+      updateValues.push(department);
+    }
+
+    if (can_export !== undefined) {
+      updateFields.push(`can_export = $${paramCount++}`);
+      updateValues.push(can_export);
+    }
+
+    if (can_manage_clients !== undefined) {
+      updateFields.push(`can_manage_clients = $${paramCount++}`);
+      updateValues.push(can_manage_clients);
+    }
+
+    if (can_view_reports !== undefined) {
+      updateFields.push(`can_view_reports = $${paramCount++}`);
+      updateValues.push(can_view_reports);
+    }
+
+    // Dodaj updated_at
+    updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
+
+    // Dodaj user_id na kraj
+    updateValues.push(userId);
+
+    if (updateFields.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        error: 'Nema podataka za ažuriranje'
+      });
+    }
+
+    const updateQuery = `
+      UPDATE users 
+      SET ${updateFields.join(', ')}
+      WHERE id = $${paramCount}
       RETURNING *
-    `, [
-      first_name, last_name, full_name,
-      phone_mobile, phone_office, company, address, department,
-      role, can_export, can_manage_clients, can_view_reports,
-      status, userId
-    ]);
+    `;
+
+    const result = await client.query(updateQuery, updateValues);
 
     await client.query('COMMIT');
+
+    console.log('✅ [BACKEND] User updated successfully:', userId);
 
     res.json({
       success: true,
@@ -426,10 +640,10 @@ router.put('/users/:id', authenticateToken, requireRole(['admin']), async (req, 
 
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('❌ Update user error:', error);
+    console.error('❌ [BACKEND] Update user error:', error);
     res.status(500).json({
       success: false,
-      error: 'Greška pri ažuriranju korisnika'
+      error: 'Greška pri ažuriranju korisnika: ' + error.message
     });
   } finally {
     client.release();
@@ -472,7 +686,7 @@ router.delete('/users/:id', authenticateToken, requireRole(['admin']), async (re
       });
     }
 
-    // Obriši korisnika (CASCADE će obrisati sve povezane podatke)
+    // Obriši korisnika
     await client.query('DELETE FROM users WHERE id = $1', [userId]);
 
     await client.query('COMMIT');
@@ -571,12 +785,46 @@ router.get('/stats', authenticateToken, requireRole(['admin']), async (req, res)
 
 console.log('✅ Admin routes loaded successfully');
 console.log('📋 Admin endpoints:');
-console.log('   GET    /api/admin/users');
-console.log('   POST   /api/admin/users');
-console.log('   GET    /api/admin/users/:id');
-console.log('   PUT    /api/admin/users/:id');
-console.log('   DELETE /api/admin/users/:id');
-console.log('   POST   /api/admin/users/:id/resend-activation');
-console.log('   GET    /api/admin/stats');
+console.log('   GET    /api/admin/health (PUBLIC)');
+console.log('   GET    /api/admin/test-email (PUBLIC)');
+console.log('   GET    /api/admin/users (AUTH)');
+console.log('   POST   /api/admin/users (AUTH)');
+console.log('   GET    /api/admin/users/:id (AUTH)');
+console.log('   PUT    /api/admin/users/:id (AUTH)');
+console.log('   DELETE /api/admin/users/:id (AUTH)');
+console.log('   POST   /api/admin/users/:id/resend-activation (AUTH)');
+console.log('   GET    /api/admin/stats (AUTH)');
+
+// ✅ DEBUG: Test specific user route
+router.get('/debug-user/:id', authenticateToken, requireRole(['admin']), async (req, res) => {
+  try {
+    const userId = req.params.id;
+    console.log('🔍 [DEBUG] Testing user route for ID:', userId);
+    
+    const result = await pool.query('SELECT id, email FROM users WHERE id = $1', [userId]);
+    
+    if (result.rows.length === 0) {
+      return res.json({
+        success: false,
+        message: 'User not found in database',
+        tested_id: userId
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'User found in database',
+      user: result.rows[0],
+      tested_id: userId
+    });
+    
+  } catch (error) {
+    console.error('❌ Debug route error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 export default router;

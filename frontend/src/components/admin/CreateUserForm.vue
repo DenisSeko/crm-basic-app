@@ -22,20 +22,37 @@
           <h2 class="section-title">📋 Osnovne Informacije</h2>
           <div class="form-grid">
             <div class="form-group">
-              <label for="name" class="form-label">
-                Ime i Prezime *
-                <span class="label-hint">Puno ime korisnika</span>
+              <label for="first_name" class="form-label">
+                Ime *
+                <span class="label-hint">Korisničko ime</span>
               </label>
               <input
-                id="name"
-                v-model="form.name"
+                id="first_name"
+                v-model="form.first_name"
                 type="text"
                 class="form-input"
-                :class="{ error: errors.name }"
-                placeholder="Unesite ime i prezime"
+                :class="{ error: errors.first_name }"
+                placeholder="Unesite ime"
                 required
               />
-              <span v-if="errors.name" class="error-message">{{ errors.name }}</span>
+              <span v-if="errors.first_name" class="error-message">{{ errors.first_name }}</span>
+            </div>
+
+            <div class="form-group">
+              <label for="last_name" class="form-label">
+                Prezime *
+                <span class="label-hint">Korisničko prezime</span>
+              </label>
+              <input
+                id="last_name"
+                v-model="form.last_name"
+                type="text"
+                class="form-input"
+                :class="{ error: errors.last_name }"
+                placeholder="Unesite prezime"
+                required
+              />
+              <span v-if="errors.last_name" class="error-message">{{ errors.last_name }}</span>
             </div>
 
             <div class="form-group">
@@ -54,27 +71,103 @@
               />
               <span v-if="errors.email" class="error-message">{{ errors.email }}</span>
             </div>
+
+            <div class="form-group">
+              <label for="username" class="form-label">
+                Korisničko ime
+                <span class="label-hint">Automatski generirano ako ostane prazno</span>
+              </label>
+              <input
+                id="username"
+                v-model="form.username"
+                type="text"
+                class="form-input"
+                placeholder="Automatski generirano"
+              />
+            </div>
           </div>
         </div>
 
-        <!-- Role and Company Section -->
+        <!-- Contact Information Section -->
         <div class="form-section">
-          <h2 class="section-title">🏢 Radne Informacije</h2>
+          <h2 class="section-title">📞 Kontakt Informacije</h2>
           <div class="form-grid">
             <div class="form-group">
+              <label for="phone_mobile" class="form-label">
+                Mobitel
+                <span class="label-hint">Mobitel broj korisnika</span>
+              </label>
+              <input
+                id="phone_mobile"
+                v-model="form.phone_mobile"
+                type="tel"
+                class="form-input"
+                placeholder="+385 99 123 4567"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="phone_office" class="form-label">
+                Službeni telefon
+                <span class="label-hint">Službeni broj telefona</span>
+              </label>
+              <input
+                id="phone_office"
+                v-model="form.phone_office"
+                type="tel"
+                class="form-input"
+                placeholder="+385 1 234 567"
+              />
+            </div>
+
+            <div class="form-group">
               <label for="company" class="form-label">
-                Odjel/Tvrtka
-                <span class="label-hint">Odjel u kojem korisnik radi</span>
+                Tvrtka
+                <span class="label-hint">Naziv tvrtke/organizacije</span>
               </label>
               <input
                 id="company"
                 v-model="form.company"
                 type="text"
                 class="form-input"
-                placeholder="npr. IT Odjel, Prodaja, Marketing..."
+                placeholder="npr. IT Solutions d.o.o."
               />
             </div>
 
+            <div class="form-group">
+              <label for="department" class="form-label">
+                Odjel
+                <span class="label-hint">Odjel u kojem korisnik radi</span>
+              </label>
+              <input
+                id="department"
+                v-model="form.department"
+                type="text"
+                class="form-input"
+                placeholder="npr. IT, Prodaja, Marketing..."
+              />
+            </div>
+          </div>
+
+          <div class="form-group full-width">
+            <label for="address" class="form-label">
+              Adresa
+              <span class="label-hint">Puna adresa korisnika</span>
+            </label>
+            <textarea
+              id="address"
+              v-model="form.address"
+              class="form-textarea"
+              rows="3"
+              placeholder="Unesite punu adresu..."
+            ></textarea>
+          </div>
+        </div>
+
+        <!-- Role and Permissions Section -->
+        <div class="form-section">
+          <h2 class="section-title">🏢 Radne Informacije</h2>
+          <div class="form-grid">
             <div class="form-group">
               <label for="role" class="form-label">
                 Uloga u Sustavu *
@@ -93,19 +186,69 @@
                 <option value="admin">Administrator</option>
               </select>
               <span v-if="errors.role" class="error-message">{{ errors.role }}</span>
-              
-              <!-- Role Descriptions -->
-              <div class="role-descriptions">
-                <div v-for="role in roleDescriptions" :key="role.value" class="role-info">
-                  <strong>{{ role.label }}:</strong> {{ role.description }}
-                </div>
-              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="auth_method" class="form-label">
+                Način Autentifikacije *
+                <span class="label-hint">Kako će korisnik pristupati sustavu</span>
+              </label>
+              <select
+                id="auth_method"
+                v-model="form.auth_method"
+                class="form-select"
+                required
+              >
+                <option value="email_only">Samo Email (Magic Link)</option>
+                <option value="email_password">Email i Lozinka</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Role Descriptions -->
+          <div class="role-descriptions">
+            <div v-for="role in roleDescriptions" :key="role.value" class="role-info">
+              <strong>{{ role.label }}:</strong> {{ role.description }}
+            </div>
+          </div>
+
+          <!-- Permissions -->
+          <div class="permissions-section">
+            <h4>Dozvole</h4>
+            <div class="permissions-grid">
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  v-model="form.can_export"
+                  class="checkbox"
+                />
+                <span class="checkmark"></span>
+                Može izvesti podatke
+              </label>
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  v-model="form.can_manage_clients"
+                  class="checkbox"
+                />
+                <span class="checkmark"></span>
+                Može upravljati klijentima
+              </label>
+              <label class="checkbox-label">
+                <input
+                  type="checkbox"
+                  v-model="form.can_view_reports"
+                  class="checkbox"
+                />
+                <span class="checkmark"></span>
+                Može pregledavati izvještaje
+              </label>
             </div>
           </div>
         </div>
 
-        <!-- Password Options Section -->
-        <div class="form-section">
+        <!-- Password Section (Only for email_password auth) -->
+        <div v-if="form.auth_method === 'email_password'" class="form-section">
           <h2 class="section-title">🔐 Postavke Lozinke</h2>
           
           <div class="password-options">
@@ -208,16 +351,34 @@
             <label class="checkbox-label">
               <input
                 type="checkbox"
-                v-model="form.send_welcome_email"
+                v-model="form.send_activation_email"
                 class="checkbox"
               />
               <span class="checkmark"></span>
-              Pošalji welcome email korisniku
+              Pošalji aktivacijski email korisniku
             </label>
             <p class="notification-hint">
-              Korisnik će dobiti email s uputama za prijavu i aktivaciju računa.
-              {{ passwordOption === 'auto' ? 'Automatski generirana lozinka će biti uključena.' : 'Korisnik će koristiti ručno postavljenu lozinku.' }}
+              Korisnik će dobiti email s uputama za aktivaciju računa.
+              {{ form.auth_method === 'email_password' && passwordOption === 'auto' ? 'Automatski generirana lozinka će biti uključena.' : '' }}
             </p>
+          </div>
+        </div>
+
+        <!-- Additional Information -->
+        <div class="form-section">
+          <h2 class="section-title">📝 Dodatne Informacije</h2>
+          <div class="form-group full-width">
+            <label for="notes" class="form-label">
+              Bilješke
+              <span class="label-hint">Dodatne napomene o korisniku</span>
+            </label>
+            <textarea
+              id="notes"
+              v-model="form.notes"
+              class="form-textarea"
+              rows="3"
+              placeholder="Dodatne napomene o korisniku..."
+            ></textarea>
           </div>
         </div>
 
@@ -247,16 +408,20 @@
         <h3 class="preview-title">Pregled Korisnika</h3>
         <div class="preview-card">
           <div class="preview-avatar">
-            {{ getUserInitials(form.name) }}
+            {{ getUserInitials(form.first_name, form.last_name) }}
           </div>
           <div class="preview-info">
-            <h4>{{ form.name || 'Ime Korisnika' }}</h4>
+            <h4>{{ form.first_name || 'Ime' }} {{ form.last_name || 'Prezime' }}</h4>
             <p class="preview-email">{{ form.email || 'email@primjer.com' }}</p>
             <div class="preview-details">
               <span class="preview-role" :class="form.role">
                 {{ formatRole(form.role) || 'Uloga' }}
               </span>
+              <span class="preview-auth" :class="form.auth_method">
+                {{ formatAuthMethod(form.auth_method) }}
+              </span>
               <span class="preview-company">{{ form.company || 'Tvrtka' }}</span>
+              <span class="preview-department">{{ form.department || 'Odjel' }}</span>
             </div>
           </div>
           <div class="preview-status">
@@ -272,7 +437,7 @@
             <li>Provjerite točnost email adrese prije slanja</li>
             <li>Odaberite odgovarajuću ulogu za svakog korisnika</li>
             <li>Automatska lozinka je sigurnija opcija</li>
-            <li>Welcome email pomaže korisnicima da brzo započnu</li>
+            <li>Aktivacijski email pomaže korisnicima da brzo započnu</li>
           </ul>
         </div>
       </div>
@@ -284,11 +449,16 @@
         <div class="modal-icon">✅</div>
         <div class="modal-content">
           <h3>Korisnik Uspješno Kreiran!</h3>
-          <p>Korisnički račun za <strong>{{ createdUser?.name }}</strong> je uspješno kreiran.</p>
+          <p>Korisnički račun za <strong>{{ createdUser?.first_name }} {{ createdUser?.last_name }}</strong> je uspješno kreiran.</p>
           
-          <div v-if="passwordOption === 'auto'" class="auto-password-info">
+          <div v-if="form.send_activation_email" class="auto-password-info">
             <p>📧 <strong>Aktivacijski email je poslan na:</strong> {{ createdUser?.email }}</p>
-            <p class="info-text">Korisnik će dobiti upute za aktivaciju računa i postavljanje lozinke.</p>
+            <p class="info-text">Korisnik će dobiti upute za aktivaciju računa.</p>
+          </div>
+
+          <div v-if="form.auth_method === 'email_password' && passwordOption === 'manual'" class="manual-password-info">
+            <p>🔐 <strong>Lozinka je postavljena ručno</strong></p>
+            <p class="info-text">Korisnik će moći pristupiti sustavu s unesenom lozinkom.</p>
           </div>
 
           <div class="modal-actions">
@@ -308,7 +478,7 @@
 <script>
 import { ref, reactive, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { adminAPI } from '@/services/api'  // Promijenjeno na @/
+import { adminAPI } from '@/services/api'
 
 export default {
   name: 'CreateUserForm',
@@ -321,17 +491,29 @@ export default {
     const createdUser = ref(null)
 
     const form = reactive({
-      name: '',
+      first_name: '',
+      last_name: '',
       email: '',
+      username: '',
+      phone_mobile: '',
+      phone_office: '',
       company: '',
-      role: '',
+      address: '',
+      department: '',
+      role: 'user',
+      auth_method: 'email_only',
+      send_activation_email: true,
+      can_export: false,
+      can_manage_clients: true,
+      can_view_reports: true,
+      notes: '',
       password: '',
-      password_confirmation: '',
-      send_welcome_email: true
+      password_confirmation: ''
     })
 
     const errors = reactive({
-      name: '',
+      first_name: '',
+      last_name: '',
       email: '',
       role: '',
       password: '',
@@ -382,9 +564,15 @@ export default {
       // Reset errors
       Object.keys(errors).forEach(key => errors[key] = '')
 
-      // Name validation
-      if (!form.name.trim()) {
-        errors.name = 'Ime je obavezno polje'
+      // First name validation
+      if (!form.first_name.trim()) {
+        errors.first_name = 'Ime je obavezno polje'
+        isValid = false
+      }
+
+      // Last name validation
+      if (!form.last_name.trim()) {
+        errors.last_name = 'Prezime je obavezno polje'
         isValid = false
       }
 
@@ -404,7 +592,7 @@ export default {
       }
 
       // Password validation for manual option
-      if (passwordOption.value === 'manual') {
+      if (form.auth_method === 'email_password' && passwordOption.value === 'manual') {
         if (!form.password) {
           errors.password = 'Lozinka je obavezna'
           isValid = false
@@ -430,46 +618,49 @@ export default {
 
         // Prepare data for API
         const userData = {
-          name: form.name,
+          first_name: form.first_name,
+          last_name: form.last_name,
           email: form.email,
+          phone_mobile: form.phone_mobile,
+          phone_office: form.phone_office,
           company: form.company,
+          address: form.address,
+          department: form.department,
           role: form.role,
-          send_welcome_email: form.send_welcome_email,
-          generate_password: passwordOption.value === 'auto'
+          auth_method: form.auth_method,
+          send_activation_email: form.send_activation_email,
+          can_export: form.can_export,
+          can_manage_clients: form.can_manage_clients,
+          can_view_reports: form.can_view_reports,
+          notes: form.notes
         }
 
-        // Add password only for manual option
-        if (passwordOption.value === 'manual') {
+        // Add username if provided
+        if (form.username.trim()) {
+          userData.username = form.username
+        }
+
+        // Add password only for manual email_password option
+        if (form.auth_method === 'email_password' && passwordOption.value === 'manual') {
           userData.password = form.password
           userData.password_confirmation = form.password_confirmation
         }
 
-        // TODO: Replace with real API call
-        // const response = await adminAPI.createUser(userData)
+        console.log('📤 Šaljem podatke na backend:', userData)
         
-        // Mock API call for now
-        await new Promise(resolve => setTimeout(resolve, 2000))
-        
-        // Mock response
-        const response = {
-          success: true,
-          user: {
-            id: Date.now(),
-            name: form.name,
-            email: form.email,
-            company: form.company,
-            role: form.role,
-            status: 'pending',
-            created_at: new Date()
-          },
-          message: 'Korisnik uspješno kreiran. Aktivacijski email je poslan.'
+        // PRAVI API POZIV - koristi tvoj postojeći adminAPI
+        const response = await adminAPI.createUser(userData)
+
+        if (response.success) {
+          createdUser.value = response.user
+          showSuccessModal.value = true
+          console.log('✅ Korisnik uspješno kreiran:', response.user)
+        } else {
+          throw new Error(response.error || 'Došlo je do greške pri kreiranju korisnika')
         }
 
-        createdUser.value = response.user
-        showSuccessModal.value = true
-
       } catch (error) {
-        console.error('Greška pri kreiranju korisnika:', error)
+        console.error('❌ Greška pri kreiranju korisnika:', error)
         alert('Došlo je do greške pri kreiranju korisnika: ' + (error.userMessage || error.message))
       } finally {
         loading.value = false
@@ -481,12 +672,19 @@ export default {
     }
 
     const createAnother = () => {
-      // Reset form
+      // Reset form but keep some defaults
       Object.keys(form).forEach(key => {
-        if (key !== 'send_welcome_email') {
+        if (!['role', 'auth_method', 'send_activation_email', 'can_manage_clients', 'can_view_reports'].includes(key)) {
           form[key] = ''
         }
       })
+      form.role = 'user'
+      form.auth_method = 'email_only'
+      form.send_activation_email = true
+      form.can_export = false
+      form.can_manage_clients = true
+      form.can_view_reports = true
+      
       passwordOption.value = 'auto'
       showSuccessModal.value = false
       createdUser.value = null
@@ -496,14 +694,9 @@ export default {
       router.push('/admin/users')
     }
 
-    const getUserInitials = (name) => {
-      if (!name) return '??'
-      return name
-        .split(' ')
-        .map(part => part[0])
-        .join('')
-        .toUpperCase()
-        .substring(0, 2)
+    const getUserInitials = (firstName, lastName) => {
+      if (!firstName && !lastName) return '??'
+      return `${firstName?.[0] || ''}${lastName?.[0] || ''}`.toUpperCase()
     }
 
     const formatRole = (role) => {
@@ -515,7 +708,24 @@ export default {
       return roles[role] || role
     }
 
-    // Watch for password option change
+    const formatAuthMethod = (method) => {
+      const methods = {
+        email_only: 'Samo Email',
+        email_password: 'Email + Lozinka'
+      }
+      return methods[method] || method
+    }
+
+    // Watch for auth method changes
+    watch(() => form.auth_method, (newValue) => {
+      if (newValue === 'email_only') {
+        form.password = ''
+        form.password_confirmation = ''
+        passwordOption.value = 'auto'
+      }
+    })
+
+    // Watch for password option changes
     watch(passwordOption, (newValue) => {
       if (newValue === 'auto') {
         form.password = ''
@@ -540,13 +750,103 @@ export default {
       createAnother,
       goToUsers,
       getUserInitials,
-      formatRole
+      formatRole,
+      formatAuthMethod
     }
   }
 }
 </script>
 
 <style scoped>
+
+.full-width {
+  grid-column: 1 / -1;
+}
+
+.form-textarea {
+  padding: 0.75rem 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+.form-textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.permissions-section {
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+  background: #f8fafc;
+  border-radius: 0.5rem;
+  border-left: 4px solid #3b82f6;
+}
+
+.permissions-section h4 {
+  margin: 0 0 1rem 0;
+  color: #1e293b;
+  font-size: 1rem;
+}
+
+.permissions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.preview-auth {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  width: fit-content;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.preview-auth.email_only {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.preview-auth.email_password {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.preview-department {
+  font-size: 0.75rem;
+  color: #6b7280;
+  background: #f3f4f6;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+.manual-password-info {
+  background: #f0f9ff;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  border-left: 4px solid #0ea5e9;
+  margin-bottom: 1.5rem;
+  text-align: left;
+}
+
+.manual-password-info p {
+  margin-bottom: 0.5rem;
+}
+
+.manual-password-info .info-text {
+  font-size: 0.875rem;
+  color: #64748b;
+}
 .create-user-form {
   padding: 0;
 }

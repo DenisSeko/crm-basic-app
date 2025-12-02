@@ -11,27 +11,30 @@
     <div class="controls-section">
       <div class="search-filter">
         <div class="search-box">
-          <input
-            v-model="searchQuery"
-            type="text"
-            placeholder="Pretraži korisnike..."
-            class="search-input"
-          />
+          <input v-model="searchQuery" type="text" placeholder="Pretraži korisnike..." class="search-input" />
           <span class="search-icon">🔍</span>
         </div>
-        
+
         <div class="filter-controls">
           <select v-model="statusFilter" class="filter-select">
             <option value="">Svi statusi</option>
             <option value="active">Aktivni</option>
-            <option value="pending">Na čekanju</option>
+            <option value="pending_verification">Na čekanju</option>
             <option value="inactive">Neaktivni</option>
+            <option value="suspended">Suspendirani</option>
           </select>
-          
+
           <select v-model="roleFilter" class="filter-select">
             <option value="">Sve uloge</option>
             <option value="admin">Admin</option>
+            <option value="manager">Manager</option>
             <option value="user">Korisnik</option>
+          </select>
+
+          <select v-model="authMethodFilter" class="filter-select">
+            <option value="">Svi načini prijave</option>
+            <option value="email_only">Samo Email</option>
+            <option value="email_password">Email + Lozinka</option>
           </select>
         </div>
       </div>
@@ -72,9 +75,9 @@
                   {{ sortDirection === 'asc' ? '↑' : '↓' }}
                 </span>
               </th>
-              <th @click="handleSort('name')" class="sortable">
+              <th @click="handleSort('first_name')" class="sortable">
                 Ime i Prezime
-                <span v-if="sortField === 'name'" class="sort-indicator">
+                <span v-if="sortField === 'first_name'" class="sort-indicator">
                   {{ sortDirection === 'asc' ? '↑' : '↓' }}
                 </span>
               </th>
@@ -96,6 +99,7 @@
                   {{ sortDirection === 'asc' ? '↑' : '↓' }}
                 </span>
               </th>
+              <th>Način Prijave</th>
               <th @click="handleSort('created_at')" class="sortable">
                 Datum Registracije
                 <span v-if="sortField === 'created_at'" class="sort-indicator">
@@ -112,12 +116,20 @@
                 <div class="user-avatar">
                   {{ getUserInitials(user) }}
                 </div>
-                {{ user.first_name }} {{ user.last_name }}
+                <div class="user-name-info">
+                  <div class="user-fullname">{{ user.first_name }} {{ user.last_name }}</div>
+                  <div v-if="user.company" class="user-company">{{ user.company }}</div>
+                </div>
               </td>
-              <td class="user-email">{{ user.email }}</td>
+              <td class="user-email">
+                <div>{{ user.email }}</div>
+                <div v-if="!user.email_verified" class="email-not-verified">
+                  ❌ Nije verificiran
+                </div>
+              </td>
               <td class="user-role">
                 <span :class="['role-badge', user.role]">
-                  {{ user.role === 'admin' ? 'Admin' : 'Korisnik' }}
+                  {{ formatRole(user.role) }}
                 </span>
               </td>
               <td class="user-status">
@@ -125,29 +137,28 @@
                   {{ getUserStatusText(user.status) }}
                 </span>
               </td>
+              <td class="user-auth">
+                <span :class="['auth-badge', user.auth_method]">
+                  {{ formatAuthMethod(user.auth_method) }}
+                </span>
+              </td>
               <td class="user-date">
                 {{ formatDate(user.created_at) }}
               </td>
               <td class="user-actions">
-                <router-link 
-                  :to="`/admin/users/${user.id}/edit`" 
-                  class="btn-edit"
-                  title="Uredi korisnika"
-                >
+                <router-link :to="`/admin/users/${user.id}/edit`" class="btn-edit" title="Uredi korisnika">
                   ✏️
                 </router-link>
-                <button 
-                  @click="toggleUserStatus(user)" 
-                  :class="['btn-status', user.status]"
-                  :title="user.status === 'active' ? 'Deaktiviraj' : 'Aktiviraj'"
-                >
-                  {{ user.status === 'active' ? '⏸️' : '▶️' }}
+                <button v-if="user.status === 'pending_verification'" @click="resendActivation(user)" class="btn-resend"
+                  title="Pošalji aktivacijski email">
+                  📧
                 </button>
-                <button 
-                  @click="confirmDeleteUser(user)" 
-                  class="btn-delete"
-                  title="Obriši korisnika"
-                >
+                <button @click="toggleUserStatus(user)" :class="['btn-status', user.status]"
+                  :title="getStatusButtonTitle(user.status)">
+                  {{ getStatusButtonIcon(user.status) }}
+                </button>
+                <button @click="confirmDeleteUser(user)" class="btn-delete" title="Obriši korisnika"
+                  :disabled="user.role === 'admin'">
                   🗑️
                 </button>
               </td>
@@ -158,23 +169,16 @@
 
       <!-- Pagination -->
       <div v-if="filteredUsers.length > 0" class="pagination">
-        <button 
-          @click="prevPage" 
-          :disabled="currentPage === 1" 
-          class="pagination-btn"
-        >
+        <button @click="prevPage" :disabled="currentPage === 1" class="pagination-btn">
           ← Prethodna
         </button>
-        
+
         <span class="pagination-info">
           Stranica {{ currentPage }} od {{ totalPages }}
+          ({{ filteredUsers.length }} korisnika)
         </span>
-        
-        <button 
-          @click="nextPage" 
-          :disabled="currentPage === totalPages" 
-          class="pagination-btn"
-        >
+
+        <button @click="nextPage" :disabled="currentPage === totalPages" class="pagination-btn">
           Sljedeća →
         </button>
       </div>
@@ -198,6 +202,10 @@
         <span class="stat-number">{{ adminUsers }}</span>
         <span class="stat-label">Administratora</span>
       </div>
+      <div class="stat-item">
+        <span class="stat-number">{{ emailOnlyUsers }}</span>
+        <span class="stat-label">Samo Email</span>
+      </div>
     </div>
   </div>
 </template>
@@ -205,7 +213,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { adminAPI, authHelper } from '@/services/api'
+import { adminAPI } from '@/services/api'
 
 export default {
   name: 'UserManagement',
@@ -218,8 +226,9 @@ export default {
     const searchQuery = ref('')
     const statusFilter = ref('')
     const roleFilter = ref('')
+    const authMethodFilter = ref('')
     const sortField = ref('id')
-    const sortDirection = ref('asc')
+    const sortDirection = ref('desc')
     const currentPage = ref(1)
     const itemsPerPage = ref(10)
 
@@ -230,10 +239,12 @@ export default {
       // Search filter
       if (searchQuery.value) {
         const query = searchQuery.value.toLowerCase()
-        filtered = filtered.filter(user => 
+        filtered = filtered.filter(user =>
           user.first_name.toLowerCase().includes(query) ||
           user.last_name.toLowerCase().includes(query) ||
-          user.email.toLowerCase().includes(query)
+          user.email.toLowerCase().includes(query) ||
+          user.company?.toLowerCase().includes(query) ||
+          user.department?.toLowerCase().includes(query)
         )
       }
 
@@ -247,20 +258,31 @@ export default {
         filtered = filtered.filter(user => user.role === roleFilter.value)
       }
 
+      // Auth method filter
+      if (authMethodFilter.value) {
+        filtered = filtered.filter(user => user.auth_method === authMethodFilter.value)
+      }
+
       return filtered
     })
 
     const sortedUsers = computed(() => {
       const sorted = [...filteredUsers.value]
-      
+
       return sorted.sort((a, b) => {
         let aValue = a[sortField.value]
         let bValue = b[sortField.value]
 
-        // Handle special cases
-        if (sortField.value === 'name') {
+        // Handle name sorting
+        if (sortField.value === 'first_name') {
           aValue = `${a.first_name} ${a.last_name}`
           bValue = `${b.first_name} ${b.last_name}`
+        }
+
+        // Handle date sorting
+        if (sortField.value === 'created_at') {
+          aValue = new Date(aValue)
+          bValue = new Date(bValue)
         }
 
         if (aValue < bValue) return sortDirection.value === 'asc' ? -1 : 1
@@ -282,8 +304,9 @@ export default {
     // Stats
     const totalUsers = computed(() => users.value.length)
     const activeUsers = computed(() => users.value.filter(u => u.status === 'active').length)
-    const pendingUsers = computed(() => users.value.filter(u => u.status === 'pending').length)
+    const pendingUsers = computed(() => users.value.filter(u => u.status === 'pending_verification').length)
     const adminUsers = computed(() => users.value.filter(u => u.role === 'admin').length)
+    const emailOnlyUsers = computed(() => users.value.filter(u => u.auth_method === 'email_only').length)
 
     // Methods
     const loadUsers = async () => {
@@ -291,62 +314,31 @@ export default {
         loading.value = true
         console.log('🔄 Učitavam korisnike...')
 
-        // Simuliramo API poziv - zamijenite sa stvarnim adminAPI.getUsers()
-        await new Promise(resolve => setTimeout(resolve, 1500))
+        // Debug: provjeri adminAPI
+        console.log('🔧 adminAPI object:', adminAPI)
+        console.log('🔧 adminAPI.getUsers function:', adminAPI.getUsers)
 
-        // Mock podaci - zamijenite sa stvarnim API odgovorom
-        users.value = [
-          {
-            id: 1,
-            first_name: 'Admin',
-            last_name: 'Korisnik',
-            email: 'admin@crm.com',
-            role: 'admin',
-            status: 'active',
-            created_at: new Date('2024-01-15')
-          },
-          {
-            id: 2,
-            first_name: 'Marko',
-            last_name: 'Marković',
-            email: 'marko@tvrtka.com',
-            role: 'user',
-            status: 'active',
-            created_at: new Date('2024-02-20')
-          },
-          {
-            id: 3,
-            first_name: 'Ana',
-            last_name: 'Anić',
-            email: 'ana.anic@mail.com',
-            role: 'user',
-            status: 'pending',
-            created_at: new Date('2024-03-10')
-          },
-          {
-            id: 4,
-            first_name: 'Ivan',
-            last_name: 'Ivić',
-            email: 'ivan.ivic@firma.hr',
-            role: 'user',
-            status: 'active',
-            created_at: new Date('2024-03-15')
-          },
-          {
-            id: 5,
-            first_name: 'Petra',
-            last_name: 'Petrić',
-            email: 'petra@novafirma.com',
-            role: 'user',
-            status: 'inactive',
-            created_at: new Date('2024-03-18')
-          }
-        ]
+        // Jednostavno pozovite adminAPI
+        console.log('🔄 Pozivam adminAPI.getUsers()...')
+        const response = await adminAPI.getUsers()
 
-        console.log('✅ Korisnici učitani:', users.value.length)
+        console.log('📡 API Response:', response)
+
+        if (response.success) {
+          users.value = response.data
+          console.log('✅ Korisnici učitani preko adminAPI:', users.value.length)
+        } else {
+          throw new Error(response.error || 'Greška pri učitavanju korisnika')
+        }
+
       } catch (error) {
         console.error('❌ Greška pri učitavanju korisnika:', error)
-        showError('Došlo je do greške pri učitavanju korisnika')
+        console.log('🔍 Error details:', {
+          status: error.response?.status,
+          message: error.message,
+          userMessage: error.userMessage
+        })
+        showError('Došlo je do greške pri učitavanju korisnika: ' + (error.userMessage || error.message))
       } finally {
         loading.value = false
       }
@@ -362,27 +354,55 @@ export default {
         sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
       } else {
         sortField.value = field
-        sortDirection.value = 'asc'
+        sortDirection.value = 'desc'
+      }
+    }
+
+    const resendActivation = async (user) => {
+      try {
+        console.log(`📧 Šaljem aktivacijski email korisniku ${user.id}`)
+
+        const response = await adminAPI.resendActivation(user.id)
+
+        if (response.success) {
+          console.log(`✅ Aktivacijski email poslan korisniku ${user.email}`)
+          alert('Aktivacijski email je uspješno poslan!')
+        } else {
+          throw new Error(response.error || 'Greška pri slanju emaila')
+        }
+
+      } catch (error) {
+        console.error('❌ Greška pri slanju aktivacijskog emaila:', error)
+        showError('Došlo je do greške pri slanju aktivacijskog emaila: ' + (error.userMessage || error.message))
       }
     }
 
     const toggleUserStatus = async (user) => {
       try {
         console.log(`🔄 Mijenjam status korisnika ${user.id}`)
-        
-        // Simuliramo API poziv
-        await new Promise(resolve => setTimeout(resolve, 500))
-        
-        user.status = user.status === 'active' ? 'inactive' : 'active'
-        console.log(`✅ Status korisnika ${user.id} promijenjen na: ${user.status}`)
-        
+
+        const newStatus = user.status === 'active' ? 'inactive' : 'active'
+        const response = await adminAPI.updateUser(user.id, { status: newStatus })
+
+        if (response.success) {
+          user.status = newStatus
+          console.log(`✅ Status korisnika ${user.id} promijenjen na: ${newStatus}`)
+        } else {
+          throw new Error(response.error || 'Greška pri promjeni statusa')
+        }
+
       } catch (error) {
         console.error('❌ Greška pri promjeni statusa:', error)
-        showError('Došlo je do greške pri promjeni statusa korisnika')
+        showError('Došlo je do greške pri promjeni statusa korisnika: ' + (error.userMessage || error.message))
       }
     }
 
     const confirmDeleteUser = (user) => {
+      if (user.role === 'admin') {
+        alert('Ne možete obrisati administratora!')
+        return
+      }
+
       if (confirm(`Jeste li sigurni da želite obrisati korisnika ${user.first_name} ${user.last_name}?`)) {
         deleteUser(user)
       }
@@ -391,34 +411,92 @@ export default {
     const deleteUser = async (user) => {
       try {
         console.log(`🗑️ Brišem korisnika ${user.id}`)
-        
-        // Simuliramo API poziv
-        await new Promise(resolve => setTimeout(resolve, 500))
-        
-        users.value = users.value.filter(u => u.id !== user.id)
-        console.log(`✅ Korisnik ${user.id} obrisan`)
-        
+
+        const response = await adminAPI.deleteUser(user.id)
+
+        if (response.success) {
+          users.value = users.value.filter(u => u.id !== user.id)
+          console.log(`✅ Korisnik ${user.id} obrisan`)
+        } else {
+          throw new Error(response.error || 'Greška pri brisanju korisnika')
+        }
+
       } catch (error) {
         console.error('❌ Greška pri brisanju korisnika:', error)
-        showError('Došlo je do greške pri brisanju korisnika')
+        showError('Došlo je do greške pri brisanju korisnika: ' + (error.userMessage || error.message))
       }
     }
 
     const getUserInitials = (user) => {
-      return `${user.first_name[0]}${user.last_name[0]}`.toUpperCase()
+      // Safe access to first_name and last_name
+      const firstName = user?.first_name || '';
+      const lastName = user?.last_name || '';
+
+      // Get first characters safely
+      const firstChar = firstName ? firstName.charAt(0) : '';
+      const lastChar = lastName ? lastName.charAt(0) : '';
+
+      // If both names are empty, use email
+      if (!firstChar && !lastChar) {
+        return user?.email?.charAt(0)?.toUpperCase() || '??';
+      }
+
+      return `${firstChar}${lastChar}`.toUpperCase();
     }
 
     const getUserStatusText = (status) => {
       const statusMap = {
         'active': 'Aktivan',
-        'pending': 'Na čekanju',
-        'inactive': 'Neaktivan'
+        'pending_verification': 'Na čekanju',
+        'inactive': 'Neaktivan',
+        'suspended': 'Suspendiran'
       }
       return statusMap[status] || status
     }
 
+    const formatRole = (role) => {
+      const roles = {
+        'admin': 'Administrator',
+        'manager': 'Manager',
+        'user': 'Korisnik'
+      }
+      return roles[role] || role
+    }
+
+    const formatAuthMethod = (method) => {
+      const methods = {
+        'email_only': 'Samo Email',
+        'email_password': 'Email + Lozinka'
+      }
+      return methods[method] || method
+    }
+
+    const getStatusButtonTitle = (status) => {
+      const titles = {
+        'active': 'Deaktiviraj korisnika',
+        'pending_verification': 'Aktiviraj korisnika',
+        'inactive': 'Aktiviraj korisnika',
+        'suspended': 'Aktiviraj korisnika'
+      }
+      return titles[status] || 'Promijeni status'
+    }
+
+    const getStatusButtonIcon = (status) => {
+      const icons = {
+        'active': '⏸️',
+        'pending_verification': '▶️',
+        'inactive': '▶️',
+        'suspended': '▶️'
+      }
+      return icons[status] || '⚙️'
+    }
+
     const formatDate = (date) => {
-      return new Date(date).toLocaleDateString('hr-HR')
+      return new Date(date).toLocaleDateString('hr-HR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      })
     }
 
     const nextPage = () => {
@@ -435,7 +513,6 @@ export default {
 
     const showError = (message) => {
       console.error('❌ Error:', message)
-      // Možete dodati toast notifikaciju ovdje
       alert(message)
     }
 
@@ -452,11 +529,12 @@ export default {
       searchQuery,
       statusFilter,
       roleFilter,
+      authMethodFilter,
       sortField,
       sortDirection,
       currentPage,
       itemsPerPage,
-      
+
       // Computed
       filteredUsers,
       paginatedUsers,
@@ -465,16 +543,22 @@ export default {
       activeUsers,
       pendingUsers,
       adminUsers,
-      
+      emailOnlyUsers,
+
       // Methods
       loadUsers,
       refreshUsers,
       handleSort,
+      resendActivation,
       toggleUserStatus,
       confirmDeleteUser,
       deleteUser,
       getUserInitials,
       getUserStatusText,
+      formatRole,
+      formatAuthMethod,
+      getStatusButtonTitle,
+      getStatusButtonIcon,
       formatDate,
       nextPage,
       prevPage
@@ -484,7 +568,72 @@ export default {
 </script>
 
 <style scoped>
-/* CSS ostaje isti kao u prethodnoj verziji */
+.user-name-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.user-fullname {
+  font-weight: 500;
+  color: #1e293b;
+}
+
+.user-company {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin-top: 0.25rem;
+}
+
+.email-not-verified {
+  font-size: 0.75rem;
+  color: #dc2626;
+  margin-top: 0.25rem;
+}
+
+.auth-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.auth-badge.email_only {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.auth-badge.email_password {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.btn-resend {
+  padding: 0.5rem;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 1rem;
+  background: #f0f9ff;
+  color: #0369a1;
+}
+
+.btn-resend:hover {
+  background: #e0f2fe;
+}
+
+.status-badge.pending_verification {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-badge.suspended {
+  background: #fecaca;
+  color: #dc2626;
+}
+
 .user-management {
   padding: 1.5rem;
   max-width: 1400px;
@@ -850,34 +999,34 @@ export default {
   .user-management {
     padding: 1rem;
   }
-  
+
   .controls-section {
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .search-filter {
     flex-direction: column;
   }
-  
+
   .search-box {
     min-width: auto;
   }
-  
+
   .action-buttons {
     justify-content: stretch;
   }
-  
+
   .btn-primary,
   .btn-secondary {
     flex: 1;
     text-align: center;
   }
-  
+
   .stats-summary {
     grid-template-columns: repeat(2, 1fr);
   }
-  
+
   .user-actions {
     flex-direction: column;
   }
@@ -887,11 +1036,11 @@ export default {
   .stats-summary {
     grid-template-columns: 1fr;
   }
-  
+
   .users-table {
     font-size: 0.875rem;
   }
-  
+
   .users-table th,
   .users-table td {
     padding: 0.75rem 0.5rem;

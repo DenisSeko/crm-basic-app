@@ -66,7 +66,7 @@ const router = createRouter({
     {
       path: '/admin',
       name: 'Admin',
-      component: () => import('@/components/admin/AdminLayout.vue'), // ISPRAVLJENO
+      component: () => import('./components/admin/AdminLayout.vue'),
       meta: { 
         requiresAuth: true,
         requiresAdmin: true,
@@ -77,25 +77,25 @@ const router = createRouter({
         {
           path: '',
           name: 'AdminDashboard',
-          component: () => import('./src/components/admin/AdminDashboard.vue'), // ISPRAVLJENO
+          component: () => import('./components/admin/AdminDashboard.vue'),
           meta: { title: 'Admin Dashboard' }
         },
         {
           path: 'users',
           name: 'UserManagement',
-          component: () => import('./src/components/admin/UserManagement.vue'), // ISPRAVLJENO
+          component: () => import('./components/admin/UserManagement.vue'),
           meta: { title: 'Upravljanje Korisnicima' }
         },
         {
           path: 'users/create',
           name: 'CreateUser',
-          component: () => import('./src/components/admin/CreateUserForm.vue'), // ISPRAVLJENO
+          component: () => import('./components/admin/CreateUserForm.vue'),
           meta: { title: 'Dodaj Novog Korisnika' }
         },
         {
           path: 'users/:id/edit',
           name: 'EditUser',
-          component: () => import('./src/components/admin/EditUserForm.vue'), // ISPRAVLJENO
+          component: () => import('./components/admin/EditUserForm.vue'),
           meta: { title: 'Uredi Korisnika' }
         }
       ]
@@ -104,28 +104,68 @@ const router = createRouter({
     // ⭐⭐⭐ WILDCARD ROUTE ⭐⭐⭐
     {
       path: '/:pathMatch(.*)*',
-     // redirect: '/'
+      redirect: '/'
     }
   ]
 })
 
-// Globalni navigation guard
+// Globalni navigation guard - AUTO-LOGIN JE ABSOLUTNI PRIORITET
 router.beforeEach((to, from, next) => {
-  console.log('🛡️ Route Guard:', to.name || to.path)
+  console.log('🛡️ Route Guard:', to.name || to.path, 'Query:', to.query)
   
+  // 🎯 KRITIČNO: AUTO-LOGIN HANDLING - MORA BITI PRVI!
+  if (to.query.autoLogin === 'true' && to.query.token && to.query.email) {
+    console.log('🔐 AUTO-LOGIN DETEKTIRAN - OBRADUJEM!', {
+      email: to.query.email,
+      tokenLength: to.query.token?.length || 0,
+      verified: to.query.verified
+    })
+    
+    try {
+      // Spremi token i podatke
+      authHelper.setAuth(to.query.token, {
+        email: to.query.email,
+        email_verified: to.query.verified === 'true',
+        role: 'user',
+        first_name: to.query.email.split('@')[0]
+      })
+      
+      console.log('✅ Auto-login uspješan! Korisnik prijavljen.')
+      
+      // Očisti URL parametre
+      const cleanUrl = window.location.origin + '/dashboard'
+      window.history.replaceState({}, document.title, cleanUrl)
+      
+      // Redirect na dashboard
+      next('/dashboard')
+      return
+      
+    } catch (error) {
+      console.error('❌ Auto-login greška:', error)
+      next('/login')
+      return
+    }
+  }
+
   const isAuthenticated = authHelper.isAuthenticated()
   const user = authHelper.getUser()
   const isEmailVerified = user?.email_verified
   const isAdmin = user?.role === 'admin'
   
+  console.log('🔐 Auth status u guardu:', {
+    isAuthenticated,
+    user: user ? { email: user.email, verified: user.email_verified } : null,
+    isAdmin
+  })
+
   // Postavi naslov stranice
   if (to.meta.title) {
     document.title = to.meta.title
   }
 
-  // ⭐⭐⭐ AUTO-REDIRECT ZA SVE ACTIVATION LINKOVE ⭐⭐⭐
-  if (to.query.token && to.query.email && to.path !== '/activate') {
-    console.log('🔗 Activation link detektiran, preusmjeravam na /activate')
+  // 🔗 ACTIVATION LINK HANDLING - SAMO ZA OBIČNE ACTIVATION LINKOVE
+  if (to.query.token && to.query.email && !to.query.autoLogin && to.path !== '/activate') {
+    console.log('🔗 Običan activation link detektiran, preusmjeravam na /activate')
     next({
       path: '/activate',
       query: to.query
@@ -133,7 +173,7 @@ router.beforeEach((to, from, next) => {
     return
   }
   
-  // ⭐⭐⭐ ADMIN RUTE PROVJERA ⭐⭐⭐
+  // 🚫 ADMIN RUTE PROVJERA
   if (to.meta.requiresAdmin) {
     if (!isAuthenticated) {
       console.log('🚫 Admin pristup odbijen: Korisnik nije prijavljen')
@@ -172,7 +212,7 @@ router.beforeEach((to, from, next) => {
     }
   }
 
-  // ⭐⭐⭐ AUTH RUTE PROVJERA ⭐⭐⭐
+  // 🔐 AUTH RUTE PROVJERA
   if (to.meta.requiresAuth) {
     if (!isAuthenticated) {
       console.log('🚫 Pristup odbijen: Korisnik nije prijavljen')
@@ -201,7 +241,7 @@ router.beforeEach((to, from, next) => {
     }
   }
   
-  // ⭐⭐⭐ GUEST RUTE PROVJERA ⭐⭐⭐
+  // 👤 GUEST RUTE PROVJERA
   if (to.meta.requiresGuest && isAuthenticated) {
     console.log('🔐 Korisnik je već prijavljen, preusmjeravam...')
     
@@ -223,7 +263,7 @@ router.beforeEach((to, from, next) => {
     return
   }
   
-  // ⭐⭐⭐ SPECIFIČNE RUTE HANDLING ⭐⭐⭐
+  // 🎯 SPECIFIČNE RUTE HANDLING
   if ((to.name === 'Login' || to.name === 'Register') && isAuthenticated && isEmailVerified) {
     console.log('🔐 Korisnik je već prijavljen i aktiviran, preusmjeravam na dashboard')
     next('/dashboard')
@@ -245,6 +285,22 @@ router.beforeEach((to, from, next) => {
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
+
+// Development debug funkcije
+if (import.meta.env.DEV) {
+  window.clearAuth = () => {
+    authHelper.clearAuth()
+    localStorage.removeItem('pending_verification_email')
+    localStorage.removeItem('intended_url')
+    console.log('🔐 Auth očišćen')
+    window.location.reload()
+  }
+  
+  console.log('🔧 Development mode - debug features enabled')
+  console.log('🐛 Debug funkcije:')
+  console.log('   - clearAuth() - očisti auth podatke')
+}
+
 app.mount('#app')
 
 console.log('🚀 Vue CRM aplikacija pokrenuta!')
@@ -259,38 +315,45 @@ console.log('🔐 Auth status:', {
 })
 
 // Dev-only features
-if (import.meta.env.DEV) {
-  console.log('🔧 Development mode - debug features enabled')
+// if (import.meta.env.DEV) {
+//   console.log('🔧 Development mode - debug features enabled')
   
-  window.__CRM_DEBUG__ = {
-    auth: authHelper,
-    router,
-    routes: router.getRoutes(),
-    clearAuth: () => {
-      authHelper.clearAuth()
-      localStorage.removeItem('pending_verification_email')
-      localStorage.removeItem('intended_url')
-      window.location.reload()
-    },
-    testActivation: (email = 'test@crm.com') => {
-      const token = 'test-token-' + Date.now()
-      const activationUrl = `http://localhost:5173/activate?token=${token}&email=${email}`
-      console.log('🔗 Test activation URL:', activationUrl)
-      return activationUrl
-    },
-    simulateAdmin: () => {
-      const adminUser = {
-        id: 1,
-        email: 'admin@crm.com',
-        name: 'Admin User',
-        role: 'admin',
-        email_verified: true
-      }
-      authHelper.setAuth('fake-admin-token', adminUser)
-      console.log('👑 Simuliran admin user:', adminUser)
-      window.location.reload()
-    }
-  }
+//   window.__CRM_DEBUG__ = {
+//     auth: authHelper,
+//     router,
+//     routes: router.getRoutes(),
+//     clearAuth: () => {
+//       authHelper.clearAuth()
+//       localStorage.removeItem('pending_verification_email')
+//       localStorage.removeItem('intended_url')
+//       window.location.reload()
+//     },
+//     testActivation: (email = 'test@crm.com') => {
+//       const token = 'test-token-' + Date.now()
+//       const activationUrl = `http://localhost:5173/activate?token=${token}&email=${email}`
+//       console.log('🔗 Test activation URL:', activationUrl)
+//       return activationUrl
+//     },
+//     simulateAdmin: () => {
+//       const adminUser = {
+//         id: 1,
+//         email: 'admin@crm.com',
+//         name: 'Admin User',
+//         role: 'admin',
+//         email_verified: true
+//       }
+//       authHelper.setAuth('fake-admin-token', adminUser)
+//       console.log('👑 Simuliran admin user:', adminUser)
+//       window.location.reload()
+//     },
+//     testAutoLogin: (email = 'test@crm.com') => {
+//       const token = 'fake-jwt-token-' + Date.now()
+//       const autoLoginUrl = `http://localhost:5173/dashboard?autoLogin=true&token=${token}&email=${email}&verified=true`
+//       console.log('🔐 Test auto-login URL:', autoLoginUrl)
+//       return autoLoginUrl
+//     }
+//   }
   
   console.log('🐛 Debug dostupan na window.__CRM_DEBUG__')
-}
+
+  

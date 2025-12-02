@@ -1,5 +1,27 @@
 <template>
   <div class="max-w-6xl mx-auto p-4 sm:p-6">
+    <!-- Auto-Login Success Message -->
+    <div v-if="showAutoLoginSuccess" class="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+          <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <h3 class="font-semibold text-green-800">Dobrodošli! 🎉</h3>
+          <p class="text-green-700 text-sm">
+            Vaš račun <strong>{{ autoLoginEmail }}</strong> je uspješno aktiviran i prijavljeni ste.
+          </p>
+        </div>
+        <button @click="showAutoLoginSuccess = false" class="text-green-600 hover:text-green-800">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
     <!-- Statistics Grid -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       <div class="bg-white p-4 sm:p-6 rounded-lg shadow-sm border">
@@ -231,8 +253,16 @@
 
 <script setup>
 import { ref, reactive, onMounted, nextTick, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { clientAPI, notesAPI, authHelper } from '../services/api'
 
+const router = useRouter()
+
+// AUTO-LOGIN VARIJABLE
+const showAutoLoginSuccess = ref(false)
+const autoLoginEmail = ref('')
+
+// POSTOJEĆE VARIJABLE
 const clients = ref([])
 const clientNotes = reactive({})
 const notesCount = ref([])
@@ -255,6 +285,46 @@ const deletingNoteId = ref(null)
 const addingNoteClientId = ref(null)
 const creatingClient = ref(false)
 const deletingClientId = ref(null)
+
+// AUTO-LOGIN FUNKCIONALNOST
+const handleAutoLogin = () => {
+  try {
+    // Provjeri URL parametre za auto-login
+    const urlParams = new URLSearchParams(window.location.search)
+    const autoLogin = urlParams.get('autoLogin')
+    const token = urlParams.get('token')
+    const email = urlParams.get('email')
+    const verified = urlParams.get('verified')
+
+    console.log('🔍 Dashboard checking auto-login parameters:', { 
+      autoLogin, token, email, verified 
+    })
+
+    if (autoLogin === 'true' && token && email) {
+      console.log('🔐 Auto-login detected in dashboard for:', email)
+      
+      // Spremi token
+      localStorage.setItem('authToken', token)
+      autoLoginEmail.value = email
+      
+      // Očisti URL parametre
+      const cleanUrl = window.location.origin + window.location.pathname
+      window.history.replaceState({}, document.title, cleanUrl)
+      
+      // Prikaži success poruku
+      showAutoLoginSuccess.value = true
+      
+      console.log('✅ Auto-login successful in dashboard!')
+      
+      // Automatski sakrij poruku nakon 5 sekundi
+      setTimeout(() => {
+        showAutoLoginSuccess.value = false
+      }, 5000)
+    }
+  } catch (error) {
+    console.error('❌ Auto-login error in dashboard:', error)
+  }
+}
 
 // COMPUTED PROPERTIES - ostaju iste
 const getClientsWithNotesCount = computed(() => {
@@ -298,7 +368,6 @@ const loadNotes = async (id) => {
     console.log('📝 Učitavam bilješke za klijenta:', id)
     loadingNotes[id] = true
     
-    // KORISTI notesAPI SA EKSPLICITNIM /api/ PREFIXOM
     const response = await notesAPI.getNotes()
     const allNotes = response.data || []
     
@@ -309,7 +378,7 @@ const loadNotes = async (id) => {
     
   } catch (error) {
     console.error('Greška pri učitavanju bilješki:', error)
-    clientNotes[id] = [] // Fallback na prazan array
+    clientNotes[id] = []
   } finally {
     loadingNotes[id] = false
   }
@@ -348,7 +417,6 @@ const loadClients = async () => {
     console.log('📋 Učitavam klijente...')
     const response = await clientAPI.getClients()
     
-    // POKUŠAJTE RAZLIČITE MOGUĆNOSTI
     if (response.data && Array.isArray(response.data)) {
       clients.value = response.data
     } else if (Array.isArray(response)) {
@@ -362,14 +430,13 @@ const loadClients = async () => {
     
     console.log('✅ Klijenti učitani:', clients.value.length)
     
-    // UČITAJ SVE POTREBNE PODATKE
     await loadStats()
     await loadNotesCount()
     await findLastNoteFromData()
     
   } catch (error) {
     console.error('Greška pri učitavanju klijenata:', error)
-    clients.value = [] // Postavite prazan array kao fallback
+    clients.value = []
   } finally {
     loading.value = false
   }
@@ -393,7 +460,6 @@ const loadStats = async () => {
     
   } catch (error) {
     console.error('Greška pri učitavanju statistike:', error)
-    // Fallback na osnovne podatke
     stats.clients = clients.value.length
     stats.totalNotes = calculateTotalNotes()
     stats.lastNote = findLastNoteContent()
@@ -428,7 +494,6 @@ const findLastNoteFromData = async () => {
       }
     }
     
-    // Fallback na postojeće podatke
     const lastNoteFromClientNotes = findLastNoteContent()
     if (lastNoteFromClientNotes !== 'Nema bilježki') {
       stats.lastNote = lastNoteFromClientNotes
@@ -542,7 +607,6 @@ const addNote = async (id) => {
     addingNoteClientId.value = id
     console.log('➕ Dodavanje bilješke za klijenta:', id, 'Sadržaj:', newNote[id])
     
-    // KORISTI notesAPI SA EKSPLICITNIM /api/ PREFIXOM
     const response = await notesAPI.createNote({
       client_id: id,
       title: 'Bilješka',
@@ -553,7 +617,6 @@ const addNote = async (id) => {
     console.log('✅ Bilješka dodana:', response.data)
     newNote[id] = ''
     
-    // Osvježi podatke
     await loadNotesCount()
     if (notesOpen[id]) {
       await loadNotes(id)
@@ -569,7 +632,6 @@ const addNote = async (id) => {
   }
 }
 
-// POPRAVLJENA DELETE NOTE METODA
 const deleteNote = async (noteId, clientId) => {
   if (!confirm('Jeste li sigurni da želite obrisati ovu bilješku?')) return
 
@@ -577,12 +639,10 @@ const deleteNote = async (noteId, clientId) => {
     deletingNoteId.value = noteId
     console.log('🗑️ Brisanje bilješke:', noteId)
     
-    // KORISTI notesAPI - on već koristi authHelper interno
     const result = await notesAPI.deleteNote(noteId)
     
     console.log('✅ Bilješka obrisana:', result)
     
-    // Osvježi podatke
     await loadNotesCount()
     await loadNotes(clientId)
     await loadStats()
@@ -626,12 +686,17 @@ const getNoteCountDisplay = (clientId) => {
 }
 
 onMounted(() => {
+  console.log('🚀 Dashboard component mounted')
+  
+  // Prvo obradi auto-login
+  handleAutoLogin()
+  
+  // Zatim učitaj podatke
   loadClients()
 })
 </script>
 
 <style scoped>
-/* Stilovi ostaju isti */
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -640,7 +705,6 @@ onMounted(() => {
   overflow: hidden;
 }
 
-/* Poboljšanja za mobilne uređaje */
 @media (max-width: 640px) {
   .min-w-0 {
     min-width: 0;

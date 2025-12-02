@@ -12,17 +12,13 @@
           <span class="breadcrumb-current">Uredi Korisnika</span>
         </div>
         <h1>Uredi Korisnika</h1>
-        <p>Ažuriraj podatke za {{ user?.name || 'korisnika' }}</p>
+        <p>Ažuriraj podatke za {{ user?.full_name || 'korisnika' }}</p>
       </div>
       <div class="header-actions">
         <router-link to="/admin/users" class="btn-outline">
           ← Natrag na Korisnike
         </router-link>
-        <button 
-          @click="refreshUser" 
-          class="btn-secondary"
-          :disabled="loading"
-        >
+        <button @click="refreshUser" class="btn-secondary" :disabled="loading">
           🔄 Osvježi
         </button>
       </div>
@@ -51,10 +47,10 @@
         <!-- User Summary Card -->
         <div class="user-summary-card">
           <div class="user-avatar-large">
-            {{ getUserInitials(user.name) }}
+            {{ getUserInitials(user.full_name) }}
           </div>
           <div class="user-summary-info">
-            <h2>{{ user.name }}</h2>
+            <h2>{{ user.full_name }}</h2>
             <p class="user-email">{{ user.email }}</p>
             <div class="user-meta">
               <span class="user-role" :class="user.role">
@@ -69,20 +65,12 @@
             </div>
           </div>
           <div class="user-actions">
-            <button
-              v-if="user.status === 'pending'"
-              @click="resendActivation"
-              class="btn-action"
-              :disabled="actionLoading"
-            >
+            <button v-if="user.status === 'pending' || user.status === 'pending_verification'" @click="resendActivation"
+              class="btn-action" :disabled="actionLoading">
               📧 Pošalji Aktivaciju
             </button>
-            <button
-              v-if="user.id !== currentUser?.id"
-              @click="toggleUserStatus"
-              class="btn-action"
-              :disabled="actionLoading"
-            >
+            <button v-if="user.id !== currentUser?.id" @click="toggleUserStatus" class="btn-action"
+              :disabled="actionLoading">
               {{ user.status === 'active' ? '⏸️ Deaktiviraj' : '✅ Aktiviraj' }}
             </button>
           </div>
@@ -98,33 +86,46 @@
             </div>
             <div class="form-grid">
               <div class="form-group">
-                <label for="name" class="form-label">
-                  Ime i Prezime *
+                <label for="first_name" class="form-label">
+                  Ime *
                 </label>
-                <input
-                  id="name"
-                  v-model="form.name"
-                  type="text"
-                  class="form-input"
-                  :class="{ error: errors.name }"
-                  placeholder="Unesite ime i prezime"
-                />
-                <span v-if="errors.name" class="error-message">{{ errors.name }}</span>
+                <input id="first_name" v-model="form.first_name" type="text" class="form-input"
+                  :class="{ error: errors.first_name }" placeholder="Unesite ime" />
+                <span v-if="errors.first_name" class="error-message">{{ errors.first_name }}</span>
+              </div>
+
+              <div class="form-group">
+                <label for="last_name" class="form-label">
+                  Prezime *
+                </label>
+                <input id="last_name" v-model="form.last_name" type="text" class="form-input"
+                  :class="{ error: errors.last_name }" placeholder="Unesite prezime" />
+                <span v-if="errors.last_name" class="error-message">{{ errors.last_name }}</span>
               </div>
 
               <div class="form-group">
                 <label for="email" class="form-label">
                   Email Adresa *
                 </label>
-                <input
-                  id="email"
-                  v-model="form.email"
-                  type="email"
-                  class="form-input"
-                  :class="{ error: errors.email }"
-                  placeholder="unesite@email.com"
-                />
+                <input id="email" v-model="form.email" type="email" class="form-input" :class="{ error: errors.email }"
+                  placeholder="unesite@email.com" />
                 <span v-if="errors.email" class="error-message">{{ errors.email }}</span>
+              </div>
+
+              <div class="form-group">
+                <label for="phone_mobile" class="form-label">
+                  Mobitel
+                </label>
+                <input id="phone_mobile" v-model="form.phone_mobile" type="tel" class="form-input"
+                  placeholder="+385 9X XXX XXX" />
+              </div>
+
+              <div class="form-group">
+                <label for="phone_office" class="form-label">
+                  Poslovni telefon
+                </label>
+                <input id="phone_office" v-model="form.phone_office" type="tel" class="form-input"
+                  placeholder="+385 1 XXXX XXX" />
               </div>
             </div>
           </div>
@@ -138,38 +139,90 @@
             <div class="form-grid">
               <div class="form-group">
                 <label for="company" class="form-label">
-                  Odjel/Tvrtka
+                  Tvrtka
                 </label>
-                <input
-                  id="company"
-                  v-model="form.company"
-                  type="text"
-                  class="form-input"
-                  placeholder="npr. IT Odjel, Prodaja, Marketing..."
-                />
+                <input id="company" v-model="form.company" type="text" class="form-input" placeholder="Naziv tvrtke" />
+              </div>
+
+              <div class="form-group">
+                <label for="department" class="form-label">
+                  Odjel
+                </label>
+                <input id="department" v-model="form.department" type="text" class="form-input"
+                  placeholder="npr. IT, Prodaja, Marketing..." />
+              </div>
+
+              <div class="form-group">
+                <label for="address" class="form-label">
+                  Adresa
+                </label>
+                <textarea id="address" v-model="form.address" class="form-input" rows="3"
+                  placeholder="Unesite adresu..."></textarea>
+              </div>
+
+              <div class="form-group">
+                <label for="status" class="form-label">Status Korisnika *</label>
+                <select id="status" v-model="form.status" class="form-select" :class="{ error: errors.status }">
+                  <option value="active">Aktivan</option>
+                  <option value="inactive">Neaktivan</option>
+                  <option value="pending">Na čekanju</option>
+                  <option value="pending_verification">Čeka verifikaciju</option>
+                </select>
+                <span v-if="errors.status" class="error-message">{{ errors.status }}</span>
               </div>
 
               <div class="form-group">
                 <label for="role" class="form-label">
                   Uloga u Sustavu *
                 </label>
-                <select
-                  id="role"
-                  v-model="form.role"
-                  class="form-select"
-                  :class="{ error: errors.role }"
-                >
+                <select id="role" v-model="form.role" class="form-select" :class="{ error: errors.role }">
                   <option value="">Odaberite ulogu</option>
                   <option value="user">Korisnik</option>
                   <option value="manager">Manager</option>
                   <option value="admin">Administrator</option>
                 </select>
                 <span v-if="errors.role" class="error-message">{{ errors.role }}</span>
-                
+
                 <div class="role-warning" v-if="form.role === 'admin' && user.id !== currentUser?.id">
-                  ⚠️ <strong>Upozorenje:</strong> Dodjeljujete administratorske privilegije. 
+                  ⚠️ <strong>Upozorenje:</strong> Dodjeljujete administratorske privilegije.
                   Korisnik će imati potpuni pristup sustavu.
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Permissions -->
+          <div class="form-section">
+            <div class="section-header">
+              <h3>🔐 Dozvole</h3>
+              <span class="section-badge">Opcijsko</span>
+            </div>
+            <div class="permissions-grid">
+              <div class="permission-item">
+                <label class="checkbox-label">
+                  <input type="checkbox" v-model="form.can_manage_clients" class="checkbox" />
+                  <span class="checkmark"></span>
+                  Upravljanje klijentima
+                </label>
+                <p class="permission-hint">Može dodavati, uređivati i brisati klijente</p>
+              </div>
+
+              <div class="permission-item">
+                <label class="checkbox-label">
+                  <input type="checkbox" v-model="form.can_view_reports" class="checkbox" />
+                  <span class="checkmark"></span>
+                  Pregled izvješća
+                </label>
+                <p class="permission-hint">Može pregledavati statistiku i izvješća</p>
+              </div>
+
+              <div class="permission-item">
+                <label class="checkbox-label">
+                  <input type="checkbox" v-model="form.can_export" class="checkbox" />
+                  <span class="checkmark"></span>
+                  Izvoz podataka
+                </label>
+                <p class="permission-hint">Može izvesti podatke u CSV/Excel formatu</p>
               </div>
             </div>
           </div>
@@ -180,15 +233,10 @@
               <h3>🔐 Resetiranje Lozinke</h3>
               <span class="section-badge">Opcijsko</span>
             </div>
-            
+
             <div class="password-reset-options">
               <label class="option-label">
-                <input
-                  type="radio"
-                  v-model="passwordOption"
-                  value="keep"
-                  class="option-radio"
-                />
+                <input type="radio" v-model="passwordOption" value="keep" class="option-radio" />
                 <span class="option-content">
                   <strong>Zadrži trenutnu lozinku</strong>
                   <span>Korisnik će nastaviti koristiti postojeću lozinku</span>
@@ -196,25 +244,15 @@
               </label>
 
               <label class="option-label">
-                <input
-                  type="radio"
-                  v-model="passwordOption"
-                  value="auto"
-                  class="option-radio"
-                />
+                <input type="radio" v-model="passwordOption" value="auto" class="option-radio" />
                 <span class="option-content">
                   <strong>Generiraj novu lozinku</strong>
-                  <span>Sustav će generirati novu lozinku i poslati je korisniku putem emaila</span>
+                  <span>Sustav će automatski generirati sigurnu lozinku i poslati je korisniku putem emaila</span>
                 </span>
               </label>
 
               <label class="option-label">
-                <input
-                  type="radio"
-                  v-model="passwordOption"
-                  value="manual"
-                  class="option-radio"
-                />
+                <input type="radio" v-model="passwordOption" value="manual" class="option-radio" />
                 <span class="option-content">
                   <strong>Postavi novu lozinku</strong>
                   <span>Ručno unesite novu lozinku za korisnika</span>
@@ -231,19 +269,9 @@
                     <span class="label-hint">Minimalno 8 znakova</span>
                   </label>
                   <div class="password-input-wrapper">
-                    <input
-                      id="password"
-                      v-model="form.password"
-                      :type="showPassword ? 'text' : 'password'"
-                      class="form-input"
-                      :class="{ error: errors.password }"
-                      placeholder="Unesite novu lozinku"
-                    />
-                    <button
-                      type="button"
-                      @click="showPassword = !showPassword"
-                      class="password-toggle"
-                    >
+                    <input id="password" v-model="form.password" :type="showPassword ? 'text' : 'password'"
+                      class="form-input" :class="{ error: errors.password }" placeholder="Unesite novu lozinku" />
+                    <button type="button" @click="showPassword = !showPassword" class="password-toggle">
                       {{ showPassword ? '🙈' : '👁️' }}
                     </button>
                   </div>
@@ -255,19 +283,10 @@
                     Potvrdi Lozinku *
                   </label>
                   <div class="password-input-wrapper">
-                    <input
-                      id="password_confirmation"
-                      v-model="form.password_confirmation"
-                      :type="showPassword ? 'text' : 'password'"
-                      class="form-input"
-                      :class="{ error: errors.password_confirmation }"
-                      placeholder="Ponovite lozinku"
-                    />
-                    <button
-                      type="button"
-                      @click="showPassword = !showPassword"
-                      class="password-toggle"
-                    >
+                    <input id="password_confirmation" v-model="form.password_confirmation"
+                      :type="showPassword ? 'text' : 'password'" class="form-input"
+                      :class="{ error: errors.password_confirmation }" placeholder="Ponovite lozinku" />
+                    <button type="button" @click="showPassword = !showPassword" class="password-toggle">
                       {{ showPassword ? '🙈' : '👁️' }}
                     </button>
                   </div>
@@ -286,11 +305,7 @@
 
             <div v-if="passwordOption !== 'keep'" class="password-notification">
               <label class="checkbox-label">
-                <input
-                  type="checkbox"
-                  v-model="form.send_password_email"
-                  class="checkbox"
-                />
+                <input type="checkbox" v-model="form.send_password_email" class="checkbox" />
                 <span class="checkmark"></span>
                 Pošalji email obavijest korisniku
               </label>
@@ -306,18 +321,15 @@
               <h3>⚡ Opasna Zona</h3>
               <span class="section-badge danger">Oprez</span>
             </div>
-            
+
             <div class="danger-actions">
               <div class="danger-action">
                 <div class="danger-info">
                   <h4>Trajno obriši korisnički račun</h4>
-                  <p>Ovom akcijom ćete trajno obrisati korisnički račun i sve povezane podatke. Ova akcija se ne može poništiti.</p>
+                  <p>Ovom akcijom ćete trajno obrisati korisnički račun i sve povezane podatke. Ova akcija se ne može
+                    poništiti.</p>
                 </div>
-                <button
-                  @click="confirmDelete"
-                  class="btn-danger"
-                  :disabled="actionLoading"
-                >
+                <button @click="confirmDelete" class="btn-danger" :disabled="actionLoading">
                   🗑️ Obriši Korisnika
                 </button>
               </div>
@@ -335,52 +347,33 @@
               </span>
             </div>
             <div class="action-buttons">
-              <button
-                type="button"
-                @click="resetForm"
-                class="btn-outline"
-                :disabled="!hasChanges || loading"
-              >
+              <button type="button" @click="resetForm" class="btn-outline" :disabled="!hasChanges || loading">
                 ❌ Odbaci Promjene
               </button>
-              <button
-                type="button"
-                @click="saveForm"
-                class="btn-secondary"
-                :disabled="!hasChanges || loading"
-              >
+              <button type="button" @click="saveForm" class="btn-secondary" :disabled="!hasChanges || loading">
                 💾 Spremi Promjene
               </button>
-              <button
-                type="button"
-                @click="saveAndContinue"
-                class="btn-primary"
-                :disabled="loading"
-              >
+              <button type="button" @click="saveAndContinue" class="btn-primary" :disabled="loading">
                 {{ loading ? 'Spremanje...' : '🚀 Spremi i Nastavi' }}
               </button>
             </div>
           </div>
         </div>
+      </div>
 
-        <!-- Activity Log -->
-        <div class="activity-section">
-          <h3>📊 Povijest Aktivnosti</h3>
-          <div class="activity-log">
-            <div v-if="userActivity.length === 0" class="empty-activity">
-              <p>Nema zapisa o aktivnostima za ovog korisnika</p>
-            </div>
-            <div v-else class="activity-items">
-              <div 
-                v-for="activity in userActivity" 
-                :key="activity.id" 
-                class="activity-item"
-              >
-                <div class="activity-icon">{{ activity.icon }}</div>
-                <div class="activity-content">
-                  <p class="activity-text">{{ activity.description }}</p>
-                  <span class="activity-time">{{ formatTime(activity.timestamp) }}</span>
-                </div>
+      <!-- Activity Log -->
+      <div class="activity-section">
+        <h3>📊 Povijest Aktivnosti</h3>
+        <div class="activity-log">
+          <div v-if="userActivity.length === 0" class="empty-activity">
+            <p>Nema zapisa o aktivnostima za ovog korisnika</p>
+          </div>
+          <div v-else class="activity-items">
+            <div v-for="activity in userActivity" :key="activity.id" class="activity-item">
+              <div class="activity-icon">{{ activity.icon }}</div>
+              <div class="activity-content">
+                <p class="activity-text">{{ activity.description }}</p>
+                <span class="activity-time">{{ formatTime(activity.timestamp) }}</span>
               </div>
             </div>
           </div>
@@ -398,7 +391,9 @@
         <div class="modal-body">
           <div class="warning-icon">⚠️</div>
           <h4>Jeste li sigurni da želite obrisati korisnika?</h4>
-          <p>Korisnik <strong>{{ user?.name }}</strong> (<strong>{{ user?.email }}</strong>) će biti trajno obrisan iz sustava.</p>
+          <p>Korisnik <strong>{{ user?.full_name }}</strong> (<strong>{{ user?.email }}</strong>) će biti trajno obrisan
+            iz
+            sustava.</p>
           <div class="delete-consequences">
             <p><strong>Ova akcija će:</strong></p>
             <ul>
@@ -433,7 +428,7 @@
 <script>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { adminAPI, authHelper } from '@/services/api'  // Promijenjeno na @/
+import { adminAPI, authHelper } from '@/services/api'
 
 export default {
   name: 'EditUserForm',
@@ -450,10 +445,20 @@ export default {
     const userActivity = ref([])
 
     const form = reactive({
-      name: '',
+      first_name: '',
+      last_name: '',
       email: '',
       company: '',
+      department: '',
+      address: '',
+      phone_mobile: '',
+      phone_office: '',
       role: '',
+      status: 'active',
+      can_export: false,
+      can_manage_clients: true,
+      can_view_reports: true,
+      // Password polja za manual reset
       password: '',
       password_confirmation: '',
       send_password_email: true
@@ -497,39 +502,96 @@ export default {
     const loadUser = async () => {
       try {
         loading.value = true
-        
-        // TODO: Replace with real API call
-        // const response = await adminAPI.getUserDetails(userId.value)
-        
-        // Mock data for now
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        
-        const mockUser = {
-          id: parseInt(userId.value),
-          name: 'Marko Marković',
-          email: 'marko@tvrtka.com',
-          company: 'IT Odjel',
-          role: 'user',
-          status: 'active',
-          created_at: new Date('2024-01-15'),
-          email_verified: true
+        console.log('🔄 Učitavam korisnika s ID:', userId.value)
+
+        // POKUŠAJ DIREKTNU RUTU PRVO
+        try {
+          console.log('📍 Pokušavam direktnu rutu /api/admin/users/' + userId.value)
+
+          // Koristi novu getUserById metodu
+          const directResponse = await adminAPI.getUserById(userId.value)
+
+          if (directResponse.success && directResponse.data) {
+            user.value = directResponse.data
+            console.log('✅ Korisnik pronađen preko direktne rute:', user.value)
+          } else {
+            throw new Error('Direktna ruta vratila prazne podatke')
+          }
+
+        } catch (directError) {
+          console.log('📍 Direktna ruta ne radi:', directError.message)
+          console.log('🔄 Pokrećem fallback metodu...')
+
+          // FALLBACK: Dohvati sve usere i filtriraj
+          try {
+            const allUsersResponse = await adminAPI.getUsers()
+            const allUsers = allUsersResponse.data || allUsersResponse
+
+            const foundUser = allUsers.find(u => u.id == userId.value)
+
+            if (!foundUser) {
+              console.error('❌ Korisnik nije pronađen ni preko fallbacka:', userId.value)
+              user.value = null
+              return
+            }
+
+            console.log('✅ Korisnik pronađen preko fallback metode:', foundUser)
+            user.value = foundUser
+          } catch (fallbackError) {
+            console.error('❌ Fallback metoda također ne radi:', fallbackError)
+            throw new Error('Nije moguće učitati podatke korisnika')
+          }
         }
 
-        user.value = mockUser
-        
-        // Initialize form
-        Object.keys(form).forEach(key => {
-          if (key in mockUser) {
-            form[key] = mockUser[key]
-            originalForm[key] = mockUser[key]
+        // INIT FORM SA PODACIMA KORISNIKA
+        if (user.value) {
+          console.log('📝 Inicijaliziram formu s podacima:', user.value)
+
+          // Koristit first_name i last_name direktno iz user objekta
+          form.first_name = user.value.first_name || ''
+          form.last_name = user.value.last_name || ''
+
+          // Osnovni podaci
+          form.email = user.value.email || ''
+          form.company = user.value.company || ''
+          form.role = user.value.role || 'user'
+          form.phone_mobile = user.value.phone_mobile || ''
+          form.department = user.value.department || ''
+          form.status = user.value.status || 'pending_verification'
+
+          // Dodatna polja ako postoje
+          if (user.value.phone_office !== undefined) {
+            form.phone_office = user.value.phone_office
           }
-        })
+          if (user.value.address !== undefined) {
+            form.address = user.value.address
+          }
+          if (user.value.can_export !== undefined) {
+            form.can_export = user.value.can_export
+          }
+          if (user.value.can_manage_clients !== undefined) {
+            form.can_manage_clients = user.value.can_manage_clients
+          }
+          if (user.value.can_view_reports !== undefined) {
+            form.can_view_reports = user.value.can_view_reports
+          }
+
+          // Spremi originalne vrijednosti za detekciju promjena
+          Object.keys(form).forEach(key => {
+            originalForm[key] = form[key]
+          })
+
+          console.log('✅ Forma uspješno inicijalizirana:', form)
+          console.log('📋 Originalne vrijednosti spremljene:', originalForm)
+        } else {
+          console.error('❌ user.value je null/undefined')
+        }
 
         // Load activity
-        loadUserActivity()
+        await loadUserActivity()
 
       } catch (error) {
-        console.error('Greška pri učitavanju korisnika:', error)
+        console.error('❌ Kritična greška pri učitavanju korisnika:', error)
         alert('Došlo je do greške pri učitavanju korisnika: ' + (error.userMessage || error.message))
       } finally {
         loading.value = false
@@ -537,35 +599,45 @@ export default {
     }
 
     const loadUserActivity = async () => {
-      // Mock activity data
-      userActivity.value = [
-        {
-          id: 1,
-          icon: '👤',
-          description: 'Korisnički račun kreiran',
-          timestamp: new Date('2024-01-15T10:00:00')
-        },
-        {
-          id: 2,
-          icon: '✅',
-          description: 'Email adresa verificirana',
-          timestamp: new Date('2024-01-15T14:30:00')
-        },
-        {
-          id: 3,
-          icon: '🔐',
-          description: 'Lozinka promijenjena',
-          timestamp: new Date('2024-01-20T09:15:00')
-        }
-      ]
+      try {
+        userActivity.value = [
+          {
+            id: 1,
+            icon: '👤',
+            description: 'Korisnički račun kreiran',
+            timestamp: new Date(user.value?.created_at || Date.now())
+          },
+          {
+            id: 2,
+            icon: user.value?.email_verified ? '✅' : '⏳',
+            description: user.value?.email_verified ? 'Email adresa verificirana' : 'Email adresa čeka verifikaciju',
+            timestamp: new Date((user.value?.created_at || Date.now()) + 4 * 60 * 60 * 1000)
+          },
+          {
+            id: 3,
+            icon: '🔐',
+            description: `Zadnja prijava: ${user.value?.last_login_at ? formatTime(user.value.last_login_at) : 'Nikada'}`,
+            timestamp: user.value?.last_login_at ? new Date(user.value.last_login_at) : new Date((user.value?.created_at || Date.now()) + 24 * 60 * 60 * 1000)
+          }
+        ]
+      } catch (error) {
+        console.error('❌ Greška pri učitavanju aktivnosti:', error)
+        userActivity.value = []
+      }
     }
 
     const validateForm = () => {
       let isValid = true
       Object.keys(errors).forEach(key => errors[key] = '')
 
-      if (!form.name.trim()) {
-        errors.name = 'Ime je obavezno polje'
+      // Validacija first_name i last_name
+      if (!form.first_name.trim()) {
+        errors.first_name = 'Ime je obavezno polje'
+        isValid = false
+      }
+
+      if (!form.last_name.trim()) {
+        errors.last_name = 'Prezime je obavezno polje'
         isValid = false
       }
 
@@ -582,6 +654,7 @@ export default {
         isValid = false
       }
 
+      // Password validacija samo za manual reset
       if (passwordOption.value === 'manual') {
         if (!form.password) {
           errors.password = 'Lozinka je obavezna'
@@ -600,6 +673,37 @@ export default {
       return isValid
     }
 
+    // NOVA FUNKCIJA: Password reset
+    const handlePasswordReset = async () => {
+      try {
+        console.log('🔐 Handling password reset for user:', userId.value)
+        
+        const passwordData = {
+          user_id: userId.value,
+          reset_type: passwordOption.value,
+          send_email: form.send_password_email
+        }
+
+        // Dodaj password polja za manual reset
+        if (passwordOption.value === 'manual') {
+          passwordData.password = form.password
+          passwordData.password_confirmation = form.password_confirmation
+        }
+
+        console.log('📡 [FRONTEND] Sending password reset request:', passwordData)
+        
+        const response = await adminAPI.resetUserPassword(passwordData)
+        
+        console.log('✅ [FRONTEND] Password reset successful:', response)
+        
+        return response
+
+      } catch (error) {
+        console.error('❌ Password reset failed:', error)
+        throw new Error('Greška pri resetiranju lozinke: ' + (error.response?.data?.error || error.message))
+      }
+    }
+
     const saveForm = async () => {
       if (!validateForm()) return
 
@@ -607,42 +711,87 @@ export default {
         loading.value = true
 
         const updateData = {
-          name: form.name,
+          first_name: form.first_name,
+          last_name: form.last_name,
           email: form.email,
           company: form.company,
-          role: form.role
+          department: form.department,
+          address: form.address,
+          phone_mobile: form.phone_mobile,
+          phone_office: form.phone_office,
+          status: form.status,
+          role: form.role,
+          can_export: form.can_export,
+          can_manage_clients: form.can_manage_clients,
+          can_view_reports: form.can_view_reports
         }
 
-        // Add password data if needed
-        if (passwordOption.value === 'manual') {
-          updateData.password = form.password
-          updateData.password_confirmation = form.password_confirmation
-          updateData.send_password_email = form.send_password_email
-        } else if (passwordOption.value === 'auto') {
-          updateData.generate_password = true
-          updateData.send_password_email = form.send_password_email
-        }
+        console.log('💾 [FRONTEND] Sending UPDATE data:', updateData)
+        console.log('👤 [FRONTEND] User ID:', userId.value)
 
-        // TODO: Replace with real API call
-        // await adminAPI.updateUser(userId.value, updateData)
-        
-        await new Promise(resolve => setTimeout(resolve, 1500))
+        // 1. Ažuriraj osnovne podatke korisnika
+        const response = await adminAPI.updateUser(userId.value, updateData)
 
-        // Update original form
-        Object.keys(updateData).forEach(key => {
-          if (key in originalForm) {
-            originalForm[key] = form[key]
+        console.log('✅ [FRONTEND] Update response:', response)
+
+        if (response && response.success) {
+          // 2. Ako je odabran password reset, obradi ga
+          if (passwordOption.value !== 'keep') {
+            console.log('🔐 [FRONTEND] Processing password reset...')
+            await handlePasswordReset()
           }
-        })
 
-        showSuccessToast.value = true
-        setTimeout(() => {
-          showSuccessToast.value = false
-        }, 5000)
+          // Ažuriraj lokalne podatke
+          user.value = {
+            ...user.value,
+            ...updateData,
+            full_name: `${form.first_name} ${form.last_name}`.trim()
+          }
+
+          // Update original form
+          Object.keys(updateData).forEach(key => {
+            if (key in originalForm) {
+              originalForm[key] = form[key]
+            }
+          })
+
+          // Reset password polja nakon uspješnog spremanja
+          if (passwordOption.value === 'manual') {
+            form.password = ''
+            form.password_confirmation = ''
+            originalForm.password = ''
+            originalForm.password_confirmation = ''
+          }
+
+          // Reset password option nakon uspješnog spremanja
+          passwordOption.value = 'keep'
+
+          showSuccessToast.value = true
+          setTimeout(() => {
+            showSuccessToast.value = false
+          }, 5000)
+
+          console.log('🎉 [FRONTEND] User updated successfully in frontend')
+        } else {
+          console.error('❌ [FRONTEND] Update response indicates failure:', response)
+          throw new Error(response?.error || 'Update failed')
+        }
 
       } catch (error) {
-        console.error('Greška pri ažuriranju korisnika:', error)
-        alert('Došlo je do greške pri ažuriranju korisnika: ' + (error.userMessage || error.message))
+        console.error('💥 [FRONTEND] Update error details:')
+        console.error('💥 Error object:', error)
+        console.error('💥 Error response:', error.response?.data)
+        console.error('💥 Error message:', error.message)
+
+        let userMessage = 'Došlo je do greške pri ažuriranju korisnika'
+
+        if (error.response?.data?.userMessage) {
+          userMessage = error.response.data.userMessage
+        } else if (error.response?.data?.error) {
+          userMessage = error.response.data.error
+        }
+
+        alert(userMessage)
       } finally {
         loading.value = false
       }
@@ -662,6 +811,7 @@ export default {
         }
       })
       passwordOption.value = 'keep'
+      Object.keys(errors).forEach(key => errors[key] = '')
     }
 
     const refreshUser = () => {
@@ -671,11 +821,10 @@ export default {
     const resendActivation = async () => {
       try {
         actionLoading.value = true
-        // TODO: Implement API call
-        // await adminAPI.resendActivationEmail(userId.value)
+        const response = await adminAPI.resendActivation(userId.value)
         alert('Aktivacijski email je poslan korisniku')
       } catch (error) {
-        alert('Greška pri slanju aktivacijskog emaila: ' + error.userMessage)
+        alert('Greška pri slanju aktivacijskog emaila: ' + (error.userMessage || error.message))
       } finally {
         actionLoading.value = false
       }
@@ -685,12 +834,13 @@ export default {
       try {
         actionLoading.value = true
         const newStatus = user.value.status === 'active' ? 'inactive' : 'active'
-        // TODO: Implement API call
-        // await adminAPI.updateUserStatus(userId.value, newStatus)
+        const response = await adminAPI.updateUser(userId.value, { status: newStatus })
+
         user.value.status = newStatus
+        form.status = newStatus
         alert(`Korisnik je ${newStatus === 'active' ? 'aktiviran' : 'deaktiviran'}`)
       } catch (error) {
-        alert('Greška pri promjeni statusa: ' + error.userMessage)
+        alert('Greška pri promjeni statusa: ' + (error.userMessage || error.message))
       } finally {
         actionLoading.value = false
       }
@@ -707,13 +857,12 @@ export default {
     const deleteUser = async () => {
       try {
         actionLoading.value = true
-        // TODO: Implement API call
-        // await adminAPI.deleteUser(userId.value)
+        const response = await adminAPI.deleteUser(userId.value)
         closeModal()
         alert('Korisnik je uspješno obrisan')
         router.push('/admin/users')
       } catch (error) {
-        alert('Greška pri brisanju korisnika: ' + error.userMessage)
+        alert('Greška pri brisanju korisnika: ' + (error.userMessage || error.message))
       } finally {
         actionLoading.value = false
       }
@@ -731,7 +880,12 @@ export default {
     }
 
     const formatStatus = (status) => {
-      const statuses = { active: 'Aktivan', pending: 'Na čekanju', inactive: 'Neaktivan' }
+      const statuses = {
+        active: 'Aktivan',
+        pending: 'Na čekanju',
+        inactive: 'Neaktivan',
+        pending_verification: 'Čeka verifikaciju'
+      }
       return statuses[status] || status
     }
 
@@ -744,14 +898,17 @@ export default {
     }
 
     // Watch for route changes
-    watch(() => route.params.id, (newId) => {
-      if (newId) {
+    watch(() => route.params.id, (newId, oldId) => {
+      console.log('🔄 Route ID promijenjen:', { from: oldId, to: newId })
+      if (newId && newId !== oldId) {
         loadUser()
       }
     })
 
     // Lifecycle
     onMounted(() => {
+      console.log('🚀 EditUserForm mounted, user ID:', userId.value)
+
       if (userId.value) {
         loadUser()
       }
@@ -965,7 +1122,8 @@ export default {
   color: #166534;
 }
 
-.user-status.pending {
+.user-status.pending,
+.user-status.pending_verification {
   background: #fef3c7;
   color: #92400e;
 }
@@ -1079,16 +1237,19 @@ export default {
 }
 
 .form-input,
-.form-select {
+.form-select,
+textarea.form-input {
   padding: 0.75rem 1rem;
   border: 1px solid #d1d5db;
   border-radius: 0.375rem;
   font-size: 0.875rem;
   transition: all 0.2s;
+  font-family: inherit;
 }
 
 .form-input:focus,
-.form-select:focus {
+.form-select:focus,
+textarea.form-input:focus {
   outline: none;
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
@@ -1114,6 +1275,25 @@ export default {
   border-radius: 0.375rem;
   font-size: 0.875rem;
   color: #92400e;
+}
+
+.permissions-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+
+.permission-item {
+  padding: 1.5rem;
+  background: #f8fafc;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+}
+
+.permission-hint {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin: 0.5rem 0 0 1.75rem;
 }
 
 .password-reset-options {
@@ -1624,6 +1804,7 @@ export default {
     transform: translateX(100%);
     opacity: 0;
   }
+
   to {
     transform: translateX(0);
     opacity: 1;
@@ -1636,17 +1817,17 @@ export default {
     flex-direction: column;
     text-align: center;
   }
-  
+
   .user-actions {
     justify-content: center;
   }
-  
+
   .form-actions {
     flex-direction: column;
     gap: 1rem;
     align-items: stretch;
   }
-  
+
   .action-buttons {
     justify-content: center;
   }
@@ -1657,20 +1838,20 @@ export default {
     flex-direction: column;
     gap: 1rem;
   }
-  
+
   .form-grid {
     grid-template-columns: 1fr;
   }
-  
+
   .danger-action {
     flex-direction: column;
     text-align: center;
   }
-  
+
   .modal-actions {
     flex-direction: column;
   }
-  
+
   .success-toast {
     left: 1rem;
     right: 1rem;
