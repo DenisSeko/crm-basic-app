@@ -1,12 +1,12 @@
 <template>
   <div class="max-w-md mx-auto mt-8 p-6 bg-white rounded-lg shadow-md border border-gray-200">
     <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">Prijava</h2>
-    
+
     <!-- Status poruke -->
     <div v-if="message" :class="[
       'mb-4 p-3 rounded-md text-sm border transition-all duration-300',
-      messageType === 'error' 
-        ? 'bg-red-50 text-red-700 border-red-200' 
+      messageType === 'error'
+        ? 'bg-red-50 text-red-700 border-red-200'
         : 'bg-green-50 text-green-700 border-green-200'
     ]">
       <div class="flex items-center">
@@ -24,11 +24,8 @@
         <div>
           <h3 class="font-semibold text-yellow-800">Email nije verifikovan</h3>
           <p class="text-yellow-700 text-sm mt-1">Provjerite svoj email za verifikacijski link.</p>
-          <button 
-            @click="resendVerificationEmail"
-            :disabled="resendingVerification"
-            class="text-yellow-800 hover:text-yellow-900 text-sm font-medium mt-2 flex items-center gap-1"
-          >
+          <button @click="resendVerificationEmail" :disabled="resendingVerification"
+            class="text-yellow-800 hover:text-yellow-900 text-sm font-medium mt-2 flex items-center gap-1">
             <span v-if="resendingVerification" class="animate-spin">⏳</span>
             {{ resendingVerification ? 'Slanje...' : 'Pošalji ponovno' }}
           </button>
@@ -40,46 +37,27 @@
       <!-- Email Field -->
       <div>
         <label for="loginEmail" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
-        <input 
-          id="loginEmail"
-          name="email"
-          v-model="loginData.email" 
-          type="email" 
-          placeholder="Unesite svoj email"
+        <input id="loginEmail" name="email" v-model="loginData.email" type="email" placeholder="Unesite svoj email"
           autocomplete="email"
           class="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-          :class="{'border-red-300 ring-1 ring-red-300': errors.email}"
-          required
-          @input="clearError('email')"
-        >
+          :class="{ 'border-red-300 ring-1 ring-red-300': errors.email }" required @input="clearError('email')">
         <p v-if="errors.email" class="text-red-500 text-xs mt-1 flex items-center">
           <span class="mr-1">⚠️</span>{{ errors.email }}
         </p>
       </div>
-      
+
       <!-- Password Field -->
       <div>
         <label for="loginPassword" class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
         <div class="relative">
-          <input 
-            id="loginPassword"
-            name="password"
-            v-model="loginData.password" 
-            :type="showPassword ? 'text' : 'password'" 
-            placeholder="Unesite lozinku"
-            autocomplete="current-password"
+          <input id="loginPassword" name="password" v-model="loginData.password"
+            :type="showPassword ? 'text' : 'password'" placeholder="Unesite lozinku" autocomplete="current-password"
             class="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-            :class="{'border-red-300 ring-1 ring-red-300': errors.password}"
-            required
-            @input="clearError('password')"
-          >
+            :class="{ 'border-red-300 ring-1 ring-red-300': errors.password }" required @input="clearError('password')">
           <!-- Show/Hide Password Button -->
-          <button
-            type="button"
-            @click="showPassword = !showPassword"
+          <button type="button" @click="showPassword = !showPassword"
             class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 transition-colors duration-200"
-            :class="{'mt-1': true}"
-          >
+            :class="{ 'mt-1': true }">
             <span class="text-lg">
               {{ showPassword ? '🙈' : '👁️' }}
             </span>
@@ -88,7 +66,7 @@
         <p v-if="errors.password" class="text-red-500 text-xs mt-1 flex items-center">
           <span class="mr-1">⚠️</span>{{ errors.password }}
         </p>
-        
+
         <!-- Password strength indicator (opcionalno) -->
         <div v-if="loginData.password" class="mt-2">
           <div class="flex items-center justify-between text-xs text-gray-500">
@@ -102,31 +80,25 @@
             </span>
           </div>
           <div class="mt-1 w-full bg-gray-200 rounded-full h-1.5">
-            <div 
-              class="h-1.5 rounded-full transition-all duration-300"
-              :class="{
-                'bg-red-500': passwordStrength <= 1,
-                'bg-yellow-500': passwordStrength === 2,
-                'bg-green-500': passwordStrength >= 3
-              }"
-              :style="{ width: `${(passwordStrength / 4) * 100}%` }"
-            ></div>
+            <div class="h-1.5 rounded-full transition-all duration-300" :class="{
+              'bg-red-500': passwordStrength <= 1,
+              'bg-yellow-500': passwordStrength === 2,
+              'bg-green-500': passwordStrength >= 3
+            }" :style="{ width: `${(passwordStrength / 4) * 100}%` }"></div>
           </div>
         </div>
       </div>
-      
+
       <!-- Submit Button -->
-      <button 
-        type="submit"
+      <button type="submit"
         class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center shadow-sm hover:shadow-md"
-        :disabled="isLoggingIn || !isFormValid"
-      >
+        :disabled="isLoggingIn || !isFormValid">
         <span v-if="isLoggingIn" class="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></span>
         <span v-else class="mr-2">🔐</span>
         {{ isLoggingIn ? 'Prijavljujem...' : 'Prijavi se' }}
       </button>
     </form>
-    
+
     <!-- Demo korisnici -->
     <div class="mt-6 p-4 bg-blue-50 rounded-md border border-blue-200">
       <h3 class="font-semibold text-blue-800 mb-3 flex items-center">
@@ -134,21 +106,16 @@
         Demo korisnici
       </h3>
       <div class="space-y-2 text-sm">
-        <div 
-          v-for="demoUser in demoUsers" 
-          :key="demoUser.email"
-          class="flex justify-between items-center p-2 bg-white rounded border border-blue-100 hover:border-blue-300 transition-colors duration-200"
-        >
+        <div v-for="demoUser in demoUsers" :key="demoUser.email"
+          class="flex justify-between items-center p-2 bg-white rounded border border-blue-100 hover:border-blue-300 transition-colors duration-200">
           <div>
             <span class="font-medium text-gray-800">{{ demoUser.name }}</span>
             <div class="text-xs text-gray-600">{{ demoUser.email }}</div>
             <div class="text-xs text-gray-500">Lozinka: {{ demoUser.password }}</div>
           </div>
-          <button 
-            @click="fillCredentials(demoUser.email, demoUser.password)"
+          <button @click="fillCredentials(demoUser.email, demoUser.password)"
             class="text-blue-600 hover:text-blue-800 text-xs font-medium px-2 py-1 border border-blue-200 rounded hover:bg-blue-50 transition-all duration-200"
-            type="button"
-          >
+            type="button">
             Koristi
           </button>
         </div>
@@ -159,23 +126,16 @@
     <div class="mt-6 text-center space-y-3">
       <p class="text-sm text-gray-600">
         Nemate račun?
-        <a 
-          href="#" 
-          @click.prevent="$emit('show-register')" 
-          class="text-blue-600 hover:text-blue-800 font-medium transition-colors duration-200"
-          role="button"
-        >
+        <a href="#" @click.prevent="$emit('show-register')"
+          class="text-blue-600 hover:text-blue-800 font-medium transition-colors duration-200" role="button">
           Registrirajte se ovdje
         </a>
       </p>
-      
+
       <div class="pt-2 border-t border-gray-200">
-        <a 
-          href="#" 
-          @click.prevent="$emit('go-home')" 
+        <a href="#" @click.prevent="$emit('go-home')"
           class="text-gray-600 hover:text-gray-800 text-sm transition-colors duration-200 inline-flex items-center"
-          role="button"
-        >
+          role="button">
           <span class="mr-1">←</span>
           Povratak na početnu stranicu
         </a>
@@ -191,6 +151,8 @@ import api, { authHelper } from '../services/api'
 
 const router = useRouter()
 const route = useRoute()
+
+// Emits
 const emit = defineEmits(['login', 'show-register', 'go-home'])
 
 // State
@@ -240,32 +202,32 @@ const demoUsers = [
 
 // Computed
 const isFormValid = computed(() => {
-  return loginData.email.trim() && 
-         loginData.password.trim() && 
-         loginData.password.length >= 1
+  return loginData.email.trim() &&
+    loginData.password.trim() &&
+    loginData.password.length >= 1
 })
 
 const passwordStrength = computed(() => {
   const password = loginData.password
   if (!password) return 0
-  
+
   let strength = 0
-  
+
   // Length check
   if (password.length >= 8) strength++
-  
+
   // Contains lowercase
   if (/[a-z]/.test(password)) strength++
-  
+
   // Contains uppercase
   if (/[A-Z]/.test(password)) strength++
-  
+
   // Contains numbers
   if (/\d/.test(password)) strength++
-  
+
   // Contains special characters
   if (/[!@#$%^&*(),.?":{}|<>]/.test(password)) strength++
-  
+
   return Math.min(strength, 4)
 })
 
@@ -305,10 +267,10 @@ const fillCredentials = (email, password) => {
 
 const validateForm = () => {
   let isValid = true
-  
+
   // Reset errors
   Object.keys(errors).forEach(key => errors[key] = '')
-  
+
   // Email validacija
   if (!loginData.email.trim()) {
     errors.email = 'Email je obavezan'
@@ -317,7 +279,7 @@ const validateForm = () => {
     errors.email = 'Email nije ispravan'
     isValid = false
   }
-  
+
   // Lozinka validacija
   if (!loginData.password.trim()) {
     errors.password = 'Lozinka je obavezna'
@@ -326,16 +288,15 @@ const validateForm = () => {
     errors.password = 'Lozinka mora imati najmanje 6 znakova'
     isValid = false
   }
-  
+
   return isValid
 }
 
 const resendVerificationEmail = async () => {
   if (resendingVerification.value) return
-  
+
   try {
     resendingVerification.value = true
-    // KORIGIRAN ENDPOINT
     await api.post('/api/auth/forgot-password', { email: loginData.email })
     showMessage('Verifikacijski email je ponovno poslan! Provjerite svoj inbox.', 'success')
     emailNotVerified.value = false
@@ -352,10 +313,10 @@ const autoPopulateFromURL = () => {
   if (route.query.email && route.query.password) {
     loginData.email = route.query.email
     loginData.password = route.query.password
-    
+
     if (route.query.demo === 'true') {
       showMessage(`Demo podaci za ${loginData.email} su automatski uneseni!`, 'success')
-      
+
       // Automatski pokreni login nakon kratkog delaya
       setTimeout(() => {
         console.log('🔄 Auto-login za demo korisnika...')
@@ -365,15 +326,10 @@ const autoPopulateFromURL = () => {
   }
 }
 
-// POPRAVLJENA LOGIN METODA
+// KLJUČNA METODA: Popravljena login metoda
 const handleLogin = async () => {
   if (!validateForm()) {
     return
-  }
-
-  // Provjeri je li token već istekao
-  if (authHelper.isTokenExpired()) {
-    authHelper.clearAuth()
   }
 
   isLoggingIn.value = true
@@ -382,56 +338,66 @@ const handleLogin = async () => {
 
   try {
     console.log('🔐 LoginForm: Pokrećem prijavu za:', loginData.email)
-    console.log('🔍 LoginForm: Koristim direktan API poziv sa /api/ prefixom')
-    
-    // DIREKTAN API POZIV SA EKSPLICITNIM /api/ PREFIXOM
+
+    // API poziv
     const response = await api.post('/api/auth/login', loginData)
-    
-    console.log('✅ LoginForm: Odgovor od API:', response.data)
-    
+
+    console.log('✅ LoginForm: API odgovor:', response.data)
+
     const { token, user } = response.data
-    
+
     // Provjeri je li email verifikovan
     if (!user.email_verified) {
       emailNotVerified.value = true
       showMessage('Molimo verifikujte svoj email prije prijave.', 'error')
       return
     }
-    
-    // DEBUG: Provjera prije spremanja
-    console.log('📦 LoginForm: Podaci za spremanje:', { token, user })
-    
-    // Spremi token i korisnika koristeći helper
-    authHelper.setAuth(token, user)
-    
-    // DEBUG: Provjera nakon spremanja
-    console.log('✅ LoginForm: Auth podaci spremljeni:')
-    console.log('   - Token:', !!authHelper.getToken())
-    console.log('   - User:', !!authHelper.getUser())
-    console.log('   - isAuthenticated:', authHelper.isAuthenticated())
-    
+
     showMessage(`Uspješno ste prijavljeni! Dobrodošli, ${user.first_name || user.full_name || user.email}`, 'success')
-    
-    console.log('✅ LoginForm: Prijava uspješna, emitiram podatke...')
-    
-    // Emit podatke AuthManager-u
-    emit('login', { token, user })
-    
-    // Preusmjeri na dashboard
-    await router.push('/dashboard')
-    
+
+    console.log('✅ LoginForm: Spremam auth podatke...')
+
+    // KLJUČNO: Spremi auth podatke OVDJE
+    authHelper.setAuth(token, user)
+
+    console.log('🔍 LoginForm: Provjera nakon spremanja:', {
+      hasToken: !!authHelper.getToken(),
+      hasUser: !!authHelper.getUser(),
+      requiresPasswordChange: user.requires_password_change,
+      isAuthenticated: authHelper.isAuthenticated()
+    })
+
+    setTimeout(() => {
+      // Fallback redirect ako AuthManager ne radi
+      if (authHelper.isAuthenticated() && route.path === '/login') {
+        console.log('🎯 LoginForm: Fallback redirect (AuthManager might not be working)');
+        const user = authHelper.getUser();
+        const redirectPath = user.requires_password_change
+          ? '/change-password?required=true'
+          : (user.role === 'admin' ? '/admin' : '/dashboard');
+        console.log('🔄 Fallback redirect to:', redirectPath);
+        router.replace(redirectPath);
+      }
+    }, 1000);
+
+    // Emit-uj parent komponenti SVE potrebne podatke
+    emit('login', {
+      success: true,
+      token: token,
+      user: user,
+      requires_password_change: user.requires_password_change || false
+    })
+
   } catch (error) {
     console.error('❌ LoginForm: Greška pri prijavi:', error)
     console.error('❌ LoginForm: Error detalji:', {
       message: error.message,
-      url: error.config?.url,
-      baseURL: error.config?.baseURL,
       status: error.response?.status,
       data: error.response?.data
     })
-    
+
     let errorMessage = 'Došlo je do greške pri prijavi. Pokušajte ponovno.'
-    
+
     if (error.response?.data?.message) {
       errorMessage = error.response.data.message
     } else if (error.response?.data?.error) {
@@ -443,12 +409,36 @@ const handleLogin = async () => {
     } else if (error.response?.status === 401) {
       errorMessage = 'Pogrešan email ili lozinka.'
       errors.password = 'Pogrešna lozinka'
+    } else if (error.response?.status === 403) {
+      // Posebna obrada za password change required
+      if (error.response?.data?.code === 'PASSWORD_CHANGE_REQUIRED') {
+        console.log('🔄 LoginForm: Password change required detected from API error')
+
+        const { token, user } = error.response.data
+
+        // Spremi privremene podatke
+        if (token && user) {
+          authHelper.setAuth(token, user)
+
+          // Emit-uj parent komponenti
+          emit('login', {
+            success: true,
+            token: token,
+            user: user,
+            requires_password_change: true,
+            from_error: true
+          })
+        }
+
+        return
+      }
+      errorMessage = 'Nemate pristup ovom resursu.'
     } else if (error.response?.status === 404) {
       errorMessage = 'Login endpoint nije pronađen. Provjerite server konfiguraciju.'
     }
-    
+
     showMessage(errorMessage, 'error')
-    
+
   } finally {
     isLoggingIn.value = false
   }
@@ -476,7 +466,7 @@ defineExpose({
   showError: (errorMessage) => {
     showMessage(errorMessage, 'error')
   },
-  
+
   clearForm: () => {
     loginData.email = ''
     loginData.password = ''
@@ -486,7 +476,7 @@ defineExpose({
     showPassword.value = false
     Object.keys(errors).forEach(key => errors[key] = '')
   },
-  
+
   setCredentials: (email, password) => {
     loginData.email = email
     loginData.password = password

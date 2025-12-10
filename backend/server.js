@@ -1,15 +1,16 @@
-// server.js - KOMPLETNO AŽURIRANO SA PRAVIM EMAIL SERVISOM
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import pkg from "pg";
+import crypto from "crypto";
+
 const { Pool } = pkg;
 
 // EmailService import
 import emailService from './services/emailService.js';
 
-console.log('📧 EmailService status in server.js:', {
+console.log('📧 EmailService status:', {
   available: !!emailService,
   hasTransporter: emailService?.transporter ? 'YES' : 'NO',
   hasActivationEmail: typeof emailService?.sendActivationEmail === 'function',
@@ -29,21 +30,13 @@ app.use(
 );
 app.use(express.json());
 
-// Debug middleware - DODANO
+// Debug middleware
 app.use((req, res, next) => {
-  console.log(
-    `🌐 ${new Date().toISOString()} ${req.method} ${req.originalUrl}`
-  );
-  if (req.method === "DELETE") {
-    console.log("🗑️ DELETE Request Details:", {
-      params: req.params,
-      headers: req.headers,
-    });
-  }
+  console.log(`🌐 ${new Date().toISOString()} ${req.method} ${req.originalUrl}`);
   next();
 });
 
-// PostgreSQL Connection - AŽURIRANO za Docker konfiguraciju
+// PostgreSQL Connection
 const pool = new Pool({
   user: "crm_user",
   host: "localhost",
@@ -52,49 +45,10 @@ const pool = new Pool({
   port: 5433,
 });
 
-// Test database connection
-const testConnection = async () => {
-  try {
-    const client = await pool.connect();
-    console.log("✅ PostgreSQL connected successfully");
-
-    // Provjeri da li users table postoji
-    const tableCheck = await client.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'users'
-      );
-    `);
-
-    console.log("📊 Users table exists:", tableCheck.rows[0].exists);
-
-    // Provjeri broj korisnika
-    const userCount = await client.query("SELECT COUNT(*) FROM users");
-    console.log("👥 Total users in database:", userCount.rows[0].count);
-
-    client.release();
-    return true;
-  } catch (error) {
-    console.error("❌ Database connection error:", error.message);
-    return false;
-  }
-};
-
 // JWT Secret
 const JWT_SECRET = "your-super-secret-jwt-key-change-in-production";
 
-// Database initialization
-const initDatabase = async () => {
-  try {
-    console.log("✅ Database structure verified - all columns exist");
-  } catch (error) {
-    console.error("❌ Database initialization error:", error);
-  }
-};
-
-// Auth Middleware
-
+// ============ AUTHENTICATION MIDDLEWARE ============
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -107,57 +61,19 @@ const authenticateToken = async (req, res, next) => {
     });
   }
 
-  // 🆕 DEVELOPMENT BYPASS - jednostavno rješenje
+  // DEVELOPMENT BYPASS
   if (process.env.NODE_ENV === 'development' && token === 'dev-bypass-2024') {
     console.log('🔧 DEV MODE: Development bypass active');
-    
-    try {
-      // Pronađi ili kreiraj development usera
-      const result = await pool.query(
-        `SELECT id, username, email, first_name, last_name, full_name, role, company, 
-                phone_mobile, email_verified, status, auth_method, department, 
-                can_export, can_manage_clients, can_view_reports 
-         FROM users WHERE email = $1 OR role = $2 
-         ORDER BY id LIMIT 1`,
-        ['demo@demo.com', 'admin']
-      );
-
-      if (result.rows.length > 0) {
-        req.user = result.rows[0];
-        console.log("🔧 DEV MODE: Using existing user:", {
-          id: req.user.id,
-          email: req.user.email,
-          role: req.user.role
-        });
-      } else {
-        // Fallback - kreiraj mock user podatke
-        req.user = {
-          id: 1,
-          email: 'dev@demo.com',
-          role: 'user',
-          email_verified: true,
-          status: 'active',
-          first_name: 'Development',
-          last_name: 'User'
-        };
-        console.log("🔧 DEV MODE: Using mock user data");
-      }
-      
-      return next();
-    } catch (dbError) {
-      console.log('🔧 DEV MODE: Database error, using fallback mock user');
-      // Fallback mock user ako database ne radi
-      req.user = {
-        id: 1,
-        email: 'dev@demo.com',
-        role: 'user', 
-        email_verified: true,
-        status: 'active',
-        first_name: 'Development',
-        last_name: 'User'
-      };
-      return next();
-    }
+    req.user = {
+      id: 1,
+      email: 'dev@demo.com',
+      role: 'user',
+      email_verified: true,
+      status: 'active',
+      first_name: 'Development',
+      last_name: 'User'
+    };
+    return next();
   }
 
   try {
@@ -167,7 +83,8 @@ const authenticateToken = async (req, res, next) => {
     const result = await pool.query(
       `SELECT id, username, email, first_name, last_name, full_name, role, company, 
               phone_mobile, email_verified, status, auth_method, department, 
-              can_export, can_manage_clients, can_view_reports 
+              can_export, can_manage_clients, can_view_reports,
+              requires_password_change, password_changed_at
        FROM users WHERE id = $1`,
       [decoded.userId]
     );
@@ -184,6 +101,8 @@ const authenticateToken = async (req, res, next) => {
     console.log("✅ User authenticated:", {
       id: req.user.id,
       email: req.user.email,
+      role: req.user.role,
+      requires_password_change: req.user.requires_password_change
     });
     next();
   } catch (error) {
@@ -195,824 +114,493 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
-
-// Admin Middleware
-const requireAdmin = (req, res, next) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({
-      success: false,
-      message: "Admin access required",
-    });
-  }
-  next();
+// Role-based Middleware (konzistentno s auth.js)
+const requireRole = (roles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+    
+    if (!roles.includes(req.user.role)) {
+      console.log(`🚫 Access denied for role ${req.user.role}, required: ${roles.join(", ")}`);
+      return res.status(403).json({
+        success: false,
+        message: `Access denied. Required role: ${roles.join(", ")}`,
+        user_role: req.user.role,
+        required_roles: roles
+      });
+    }
+    
+    console.log(`✅ Role check passed: ${req.user.role} in [${roles.join(", ")}]`);
+    next();
+  };
 };
 
-// ⭐⭐⭐ ADMIN ENDPOINTS - KOMPLETNA IMPLEMENTACIJA ⭐⭐⭐
+// Backward compatibility for requireAdmin
+const requireAdmin = requireRole(['admin']);
 
-// GET ALL USERS
-app.get(
-  "/api/admin/users",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      console.log("🔧 [ADMIN] Fetching all users...");
+// Helper funkcija za generiranje display_name iz emaila
+const generateDisplayNameFromEmail = (email) => {
+  if (!email) return 'Korisnik';
+  
+  const nameFromEmail = email.split('@')[0];
+  const cleanName = nameFromEmail
+    .replace(/[0-9._-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const displayName = cleanName.split(' ')[0] || nameFromEmail;
+  return displayName.charAt(0).toUpperCase() + displayName.slice(1);
+};
 
-      const result = await pool.query(
-        `SELECT id, username, email, first_name, last_name, full_name, role, company, 
-              phone_mobile, status, email_verified, auth_method, department,
-              can_export, can_manage_clients, can_view_reports,
-              created_at, last_login_at, login_count
-       FROM users ORDER BY created_at DESC`
-      );
+// Helper funkcija za generiranje sigurne lozinke
+const generateSecurePassword = () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+  return Array.from(crypto.randomBytes(16))
+    .map(byte => chars[byte % chars.length])
+    .join('');
+};
 
-      console.log(`✅ [ADMIN] Users fetched: ${result.rows.length}`);
+// ============ VERIFY EMAIL TOKEN ENDPOINT ============
+app.get("/api/auth/verify/:token", async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const token = req.params.token;
+    console.log("🔐 Verify email token:", token.substring(0, 20) + "...");
 
-      res.json({
-        success: true,
-        data: result.rows,
-        total: result.rows.length,
-      });
-    } catch (error) {
-      console.error("❌ [ADMIN] Get users error:", error);
-      res.status(500).json({
+    // Provjeri token
+    const tokenCheck = await client.query(
+      `SELECT vt.*, u.id as user_id, u.email, u.first_name, u.last_name, 
+              u.full_name, u.role, u.status, u.email_verified, 
+              u.requires_password_change
+       FROM verification_tokens vt
+       JOIN users u ON vt.user_id = u.id
+       WHERE vt.token = $1 AND vt.token_type = 'account_activation'`,
+      [token]
+    );
+
+    if (tokenCheck.rows.length === 0) {
+      console.log('❌ Token not found');
+      return res.status(404).json({
         success: false,
-        message: "Greška pri dohvaćanju korisnika",
+        message: "Verifikacijski token nije pronađen ili je istekao"
       });
     }
-  }
-);
 
-// ✅ GET USER BY ID
-app.get(
-  "/api/admin/users/:id",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      const userId = req.params.id;
-
-      console.log("🔧 [ADMIN] Fetching user by ID:", userId);
-
-      const result = await pool.query(
-        `
-      SELECT 
-        id, username, email, first_name, last_name, full_name,
-        phone_mobile, phone_office, company, address, department,
-        auth_method, role, status, email_verified,
-        can_export, can_manage_clients, can_view_reports,
-        last_login_at, login_count, created_at, updated_at
-      FROM users 
-      WHERE id = $1
-    `,
-        [userId]
-      );
-
-      if (result.rows.length === 0) {
-        console.log("❌ [ADMIN] User not found:", userId);
-        return res.status(404).json({
-          success: false,
-          error: "Korisnik nije pronađen",
-        });
-      }
-
-      const user = result.rows[0];
-      console.log("✅ [ADMIN] User found:", {
-        id: user.id,
-        email: user.email,
-        name: user.full_name,
-      });
-
-      res.json({
-        success: true,
-        data: user,
-      });
-    } catch (error) {
-      console.error("❌ [ADMIN] Get user error:", error);
-      res.status(500).json({
+    const tokenData = tokenCheck.rows[0];
+    
+    // Provjeri da li je token već iskorišten
+    if (tokenData.used === true) {
+      console.log('ℹ️ Token already used');
+      return res.status(400).json({
         success: false,
-        error: "Greška pri dohvaćanju korisnika: " + error.message,
+        message: "Verifikacijski token je već iskorišten"
       });
     }
-  }
-);
-
-// CREATE USER - AŽURIRANO SA PRAVIM EMAILOVIMA
-app.post(
-  "/api/admin/users",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    const client = await pool.connect();
-
-    try {
-      await client.query("BEGIN");
-
-      const {
-        email,
-        first_name,
-        last_name,
-        phone_mobile,
-        phone_office,
-        company,
-        address,
-        department,
-        role = "user",
-        send_activation_email = true,
-      } = req.body;
-
-      const full_name = `${first_name} ${last_name}`;
-      const username = email.split("@")[0];
-
-      console.log("🔧 [ADMIN] Creating user:", { email, full_name, role });
-
-      // Provjeri da li email već postoji
-      const existingUser = await client.query(
-        "SELECT id FROM users WHERE email = $1",
-        [email]
-      );
-
-      if (existingUser.rows.length > 0) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({
-          success: false,
-          error: "Korisnik s ovom email adresom već postoji",
-        });
-      }
-
-      // Kreiraj novog korisnika
-      const userResult = await client.query(
-        `
-      INSERT INTO users (
-        username, email, first_name, last_name, full_name,
-        phone_mobile, phone_office, company, address, department,
-        auth_method, role, status, email_verified,
-        created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-      RETURNING *
-    `,
-        [
-          username,
-          email,
-          first_name,
-          last_name,
-          full_name,
-          phone_mobile,
-          phone_office,
-          company,
-          address,
-          department,
-          "email_only",
-          role,
-          "pending_verification",
-          false,
-          req.user.id,
-        ]
-      );
-
-      const newUser = userResult.rows[0];
-      console.log("✅ [ADMIN] User created:", newUser.id);
-
-      let activationData = null;
-      let emailSent = false;
-
-      // Ako je odabrano, generiraj aktivacijski token i POŠALJI PRAVI EMAIL
-      if (send_activation_email) {
-        const crypto = await import("crypto");
-        const verificationToken = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
-        // Spremi token u verification_tokens tabelu
-        await client.query(
-          `
-        INSERT INTO verification_tokens (user_id, token, token_type, expires_at)
-        VALUES ($1, $2, $3, $4)
-      `,
-          [newUser.id, verificationToken, "account_activation", expiresAt]
-        );
-
-        console.log("🔑 [ADMIN] Activation token generated:", verificationToken);
-
-        // POŠALJI PRAVI EMAIL PREKO EMAIL SERVISA
-        try {
-          if (emailService && emailService.sendActivationEmail) {
-            emailSent = await emailService.sendActivationEmail(
-              email,
-              verificationToken,
-              full_name,
-              req.user.full_name || req.user.username
-            );
-            
-            console.log("✅ [ADMIN] Activation email sent via EmailService:", emailSent);
-          } else {
-            console.log("❌ [ADMIN] EmailService not available");
-          }
-        } catch (emailError) {
-          console.error("❌ [ADMIN] Activation email error:", emailError);
-          // Nastavimo bez emaila
-        }
-
-        activationData = {
-          email_sent: emailSent,
-          activation_token: verificationToken,
-          activation_link: `http://localhost:5173/activate-account?token=${verificationToken}&email=${encodeURIComponent(email)}`
-        };
-      }
-
-      await client.query("COMMIT");
-
-      res.status(201).json({
-        success: true,
-        message: send_activation_email && emailSent
-          ? "Korisnik kreiran i aktivacijski email poslan"
-          : send_activation_email && !emailSent
-          ? "Korisnik kreiran (email nije uspješno poslan)"
-          : "Korisnik kreiran (email nije poslan)",
-        user: {
-          id: newUser.id,
-          username: newUser.username,
-          email: newUser.email,
-          first_name: newUser.first_name,
-          last_name: newUser.last_name,
-          full_name: newUser.full_name,
-          role: newUser.role,
-          status: newUser.status,
-          email_verified: newUser.email_verified,
-          auth_method: newUser.auth_method,
-          created_at: newUser.created_at,
-        },
-        activation: activationData,
-      });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("❌ [ADMIN] Create user error:", error);
-      res.status(500).json({
+    
+    // Provjeri da li je token istekao
+    if (tokenData.expires_at < new Date()) {
+      console.log('❌ Token expired');
+      return res.status(400).json({
         success: false,
-        error: "Greška pri kreiranju korisnika: " + error.message,
+        message: "Verifikacijski token je istekao"
       });
-    } finally {
-      client.release();
     }
+
+    console.log("✅ Valid token found for user:", {
+      email: tokenData.email,
+      user_id: tokenData.user_id,
+      status: tokenData.status,
+      email_verified: tokenData.email_verified
+    });
+
+    // Ažuriraj korisnika kao verificiranog
+    await client.query(
+      `UPDATE users SET 
+        status = 'active',
+        email_verified = true,
+        verified_at = NOW(),
+        updated_at = NOW()
+       WHERE id = $1`,
+      [tokenData.user_id]
+    );
+
+    // Označi token kao iskorišten
+    await client.query(
+      `UPDATE verification_tokens SET 
+        used = true,
+        used_at = NOW()
+       WHERE id = $1`,
+      [tokenData.id]
+    );
+
+    await client.query('COMMIT');
+
+    console.log("✅ Email verified successfully for:", tokenData.email);
+
+    // Generiraj JWT token za automatsku prijavu
+    const authToken = jwt.sign(
+      {
+        userId: tokenData.user_id,
+        email: tokenData.email,
+        role: tokenData.role,
+      },
+      JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+
+    res.json({
+      success: true,
+      message: "Email je uspješno verificiran!",
+      token: authToken,
+      user: {
+        id: tokenData.user_id,
+        email: tokenData.email,
+        first_name: tokenData.first_name,
+        last_name: tokenData.last_name,
+        full_name: tokenData.full_name,
+        role: tokenData.role,
+        email_verified: true,
+        status: 'active',
+        requires_password_change: tokenData.requires_password_change || false
+      }
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Verify email error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Došlo je do greške pri verifikaciji emaila"
+    });
+  } finally {
+    client.release();
   }
-);
-
-// RESEND ACTIVATION EMAIL - AŽURIRANO SA PRAVIM EMAILOVIMA
-app.post(
-  "/api/admin/users/:id/resend-activation",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    const client = await pool.connect();
-
-    try {
-      await client.query("BEGIN");
-
-      const userId = req.params.id;
-
-      console.log("🔧 [ADMIN] Resending activation for user:", userId);
-
-      // Dohvati korisnika
-      const userResult = await client.query(
-        `SELECT id, email, first_name, last_name, full_name 
-       FROM users WHERE id = $1`,
-        [userId]
-      );
-
-      if (userResult.rows.length === 0) {
-        await client.query("ROLLBACK");
-        return res.status(404).json({
-          success: false,
-          error: "Korisnik nije pronađen",
-        });
-      }
-
-      const user = userResult.rows[0];
-
-      // Generiraj novi token
-      const crypto = await import("crypto");
-      const verificationToken = crypto.randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
-      // Obriši stare tokene za ovog korisnika
-      await client.query(
-        "DELETE FROM verification_tokens WHERE user_id = $1 AND token_type = $2",
-        [userId, "account_activation"]
-      );
-
-      // Spremi novi token
-      await client.query(
-        `
-      INSERT INTO verification_tokens (user_id, token, token_type, expires_at)
-      VALUES ($1, $2, $3, $4)
-    `,
-        [userId, verificationToken, "account_activation", expiresAt]
-      );
-
-      console.log("🔑 [ADMIN] New activation token generated:", verificationToken);
-
-      let emailSent = false;
-
-      // POŠALJI PRAVI EMAIL PREKO EMAIL SERVISA
-      try {
-        if (emailService && emailService.sendActivationEmail) {
-          emailSent = await emailService.sendActivationEmail(
-            user.email,
-            verificationToken,
-            user.full_name || `${user.first_name} ${user.last_name}`,
-            req.user.full_name || req.user.username
-          );
-          
-          console.log("✅ [ADMIN] Activation email sent via EmailService:", emailSent);
-        } else {
-          console.log("❌ [ADMIN] EmailService not available for activation");
-        }
-      } catch (emailError) {
-        console.error("❌ [ADMIN] Activation email error:", emailError);
-        // Nastavimo bez emaila
-      }
-
-      await client.query("COMMIT");
-
-      res.json({
-        success: true,
-        message: "Aktivacijski email ponovno poslan",
-        email: {
-          sent: emailSent,
-          to: user.email
-        },
-        activation: {
-          activation_token: verificationToken,
-          activation_link: `http://localhost:5173/activate-account?token=${verificationToken}&email=${encodeURIComponent(user.email)}`
-        }
-      });
-
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("❌ [ADMIN] Resend activation error:", error);
-      res.status(500).json({
-        success: false,
-        error: "Greška pri slanju aktivacijskog emaila",
-      });
-    } finally {
-      client.release();
-    }
-  }
-);
-
-// UPDATE USER
-app.put(
-  "/api/admin/users/:id",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    const client = await pool.connect();
-
-    try {
-      await client.query("BEGIN");
-
-      const userId = req.params.id;
-      const {
-        first_name,
-        last_name,
-        phone_mobile,
-        phone_office,
-        company,
-        address,
-        department,
-        role,
-        can_export,
-        can_manage_clients,
-        can_view_reports,
-        status,
-      } = req.body;
-
-      console.log("🔧 [ADMIN] Updating user:", userId);
-      console.log("📦 Request body:", req.body);
-
-      // Validacija obaveznih polja
-      if (!userId) {
-        return res.status(400).json({
-          success: false,
-          error: "ID korisnika je obavezan",
-        });
-      }
-
-      // Provjeri da li korisnik postoji
-      const userCheck = await client.query(
-        "SELECT id, username, email, status FROM users WHERE id = $1",
-        [userId]
-      );
-
-      if (userCheck.rows.length === 0) {
-        await client.query("ROLLBACK");
-        return res.status(404).json({
-          success: false,
-          error: "Korisnik nije pronađen",
-        });
-      }
-
-      const existingUser = userCheck.rows[0];
-
-      // Generiranje full_name
-      let full_name = "";
-      if (first_name && last_name) {
-        full_name = `${first_name} ${last_name}`;
-      } else if (first_name) {
-        full_name = first_name;
-      } else if (last_name) {
-        full_name = last_name;
-      } else {
-        full_name = existingUser.full_name || existingUser.username || existingUser.email || "";
-      }
-
-      // Eksplicitno handle-ajte status
-      let finalStatus = 'active'; // default
-      if (status !== undefined && status !== null) {
-        finalStatus = status;
-      } else if (existingUser.status) {
-        finalStatus = existingUser.status;
-      }
-
-      // Pripremi vrijednosti za update
-      const updateValues = [
-        first_name || null,
-        last_name || null,
-        full_name,
-        phone_mobile || null,
-        phone_office || null,
-        company || null,
-        address || null,
-        department || null,
-        role,
-        can_export !== undefined ? can_export : false,
-        can_manage_clients !== undefined ? can_manage_clients : false,
-        can_view_reports !== undefined ? can_view_reports : false,
-        finalStatus, // KORISTITE FINALNI STATUS
-        userId,
-      ];
-
-      console.log("🔍 Debug info:");
-      console.log("🔍 Received status:", status);
-      console.log("🔍 Existing user status:", existingUser.status);
-      console.log("🔍 Final status to save:", finalStatus);
-      console.log("📝 Update values:", updateValues);
-
-      // Update korisnika
-      const result = await client.query(
-        `
-        UPDATE users SET
-          first_name = $1,
-          last_name = $2,
-          full_name = $3,
-          phone_mobile = $4,
-          phone_office = $5,
-          company = $6,
-          address = $7,
-          department = $8,
-          role = $9,
-          can_export = $10,
-          can_manage_clients = $11,
-          can_view_reports = $12,
-          status = $13,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $14
-        RETURNING *
-        `,
-        updateValues
-      );
-
-      await client.query("COMMIT");
-
-      console.log("✅ [ADMIN] User updated successfully:", result.rows[0]);
-
-      res.json({
-        success: true,
-        message: "Korisnik uspješno ažuriran",
-        data: result.rows[0],
-      });
-
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("❌ [ADMIN] Update user error:", error);
-      
-      let errorMessage = "Greška pri ažuriranju korisnika";
-      
-      if (error.code === '23505') {
-        errorMessage = "Korisnik sa tim podacima već postoji";
-      } else if (error.code === '23503') {
-        errorMessage = "Referencirani podatak ne postoji";
-      } else if (error.code === '23502') {
-        errorMessage = "Obavezno polje nije popunjeno";
-      }
-
-      res.status(500).json({
-        success: false,
-        error: errorMessage,
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    } finally {
-      client.release();
-    }
-  }
-);
-
-// DELETE USER
-app.delete(
-  "/api/admin/users/:id",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    const client = await pool.connect();
-
-    try {
-      await client.query("BEGIN");
-
-      const userId = req.params.id;
-
-      console.log("🔧 [ADMIN] Deleting user:", userId);
-
-      // Provjeri da li korisnik postoji
-      const userCheck = await client.query(
-        "SELECT id, email FROM users WHERE id = $1",
-        [userId]
-      );
-
-      if (userCheck.rows.length === 0) {
-        await client.query("ROLLBACK");
-        return res.status(404).json({
-          success: false,
-          error: "Korisnik nije pronađen",
-        });
-      }
-
-      const userEmail = userCheck.rows[0].email;
-
-      // Ne dozvoli brisanje samog sebe
-      if (parseInt(userId) === req.user.id) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({
-          success: false,
-          error: "Ne možete obrisati vlastiti račun",
-        });
-      }
-
-      // Obriši korisnika
-      await client.query("DELETE FROM users WHERE id = $1", [userId]);
-
-      await client.query("COMMIT");
-
-      res.json({
-        success: true,
-        message: "Korisnik uspješno obrisan",
-        deleted_user: {
-          id: userId,
-          email: userEmail,
-        },
-      });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("❌ [ADMIN] Delete user error:", error);
-      res.status(500).json({
-        success: false,
-        error: "Greška pri brisanju korisnika",
-      });
-    } finally {
-      client.release();
-    }
-  }
-);
-
-// ADMIN HEALTH CHECK
-app.get("/api/admin/health", (req, res) => {
-  res.json({
-    success: true,
-    message: "Admin API is working",
-    timestamp: new Date().toISOString(),
-    endpoints: {
-      "GET /api/admin/users": "List all users",
-      "POST /api/admin/users": "Create new user",
-      "PUT /api/admin/users/:id": "Update user",
-      "DELETE /api/admin/users/:id": "Delete user",
-      "POST /api/admin/users/:id/resend-activation": "Resend activation email",
-    },
-  });
 });
 
-// ADMIN STATS
-app.get(
-  "/api/admin/stats",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      console.log("📊 [ADMIN] Fetching admin statistics...");
+// ============ VERIFY AUTH TOKEN ENDPOINT ============
+app.get("/api/auth/verify", authenticateToken, async (req, res) => {
+  try {
+    // Ensure user has proper first_name and full_name
+    let userFirstName = req.user.first_name;
+    let userFullName = req.user.full_name;
+    
+    // If first_name is empty, generate from email
+    if (!userFirstName || !userFirstName.trim()) {
+      userFirstName = generateDisplayNameFromEmail(req.user.email);
+      console.log(`🔄 Auto-generated first_name for verify: ${userFirstName}`);
+    }
+    
+    // If full_name is empty, create from first_name + last_name
+    if (!userFullName || !userFullName.trim()) {
+      userFullName = userFirstName + (req.user.last_name ? ' ' + req.user.last_name : userFirstName);
+      console.log(`🔄 Auto-generated full_name for verify: ${userFullName}`);
+    }
 
-      // Ukupni broj korisnika po statusu
-      const userStats = await pool.query(`
-      SELECT 
-        status,
-        COUNT(*) as count
-      FROM users 
-      GROUP BY status
-      ORDER BY status
-    `);
+    res.json({
+      success: true,
+      user: {
+        ...req.user,
+        first_name: userFirstName,
+        full_name: userFullName,
+      },
+    });
+  } catch (error) {
+    console.error("Token verification error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error verifying token",
+    });
+  }
+});
 
-      // Korisnici po auth metodi
-      const authStats = await pool.query(`
-      SELECT 
-        auth_method,
-        COUNT(*) as count
-      FROM users 
-      GROUP BY auth_method
-      ORDER BY auth_method
-    `);
+// ============ VERIFY ENDPOINT - ROLE-BASED REDIRECT ============
+app.get("/api/auth/activate/:token", async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
 
-      // Korisnici po roli
-      const roleStats = await pool.query(`
-      SELECT 
-        role,
-        COUNT(*) as count
-      FROM users 
-      GROUP BY role
-      ORDER BY role
-    `);
+    const token = req.params.token;
+    const email = req.query.email;
+    
+    console.log("🎯 Activate account endpoint hit:", {
+      token: token.substring(0, 20) + "...",
+      email: email || 'No email provided'
+    });
 
-      res.json({
-        success: true,
-        data: {
-          users_by_status: userStats.rows,
-          users_by_auth_method: authStats.rows,
-          users_by_role: roleStats.rows,
-          summary: {
-            total_users: userStats.rows.reduce(
-              (sum, row) => sum + parseInt(row.count),
-              0
-            ),
-            pending_verification:
-              userStats.rows.find(
-                (row) => row.status === "pending_verification"
-              )?.count || 0,
-            active_users:
-              userStats.rows.find((row) => row.status === "active")?.count || 0,
-            email_only_users:
-              authStats.rows.find((row) => row.auth_method === "email_only")
-                ?.count || 0,
-          },
-        },
-      });
-    } catch (error) {
-      console.error("❌ [ADMIN] Stats error:", error);
-      res.status(500).json({
+    // Check if token exists
+    const tokenExistsCheck = await client.query(`
+      SELECT vt.*, u.id as user_id, u.email as user_email, u.status as user_status,
+             u.first_name, u.last_name, u.full_name, u.role, u.auth_method,
+             u.requires_password_change, u.password_hash
+      FROM verification_tokens vt
+      JOIN users u ON vt.user_id = u.id
+      WHERE vt.token = $1 AND vt.token_type = 'account_activation'
+    `, [token]);
+
+    if (tokenExistsCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      console.log('❌ Token not found');
+      return res.status(404).json({
         success: false,
-        error: "Greška pri dohvaćanju statistike",
+        error: "Aktivacijski token nije pronađen ili je istekao"
       });
     }
-  }
-);
 
-// PASSWORD RESET ENDPOINT FOR ADMIN - AŽURIRANO SA PRAVIM EMAILOVIMA
-app.post(
-  "/api/admin/users/reset-password",
-  authenticateToken,
-  requireAdmin,
-  async (req, res) => {
-    const client = await pool.connect();
+    const existingToken = tokenExistsCheck.rows[0];
+    console.log("📋 Token found for user:", {
+      email: existingToken.user_email,
+      role: existingToken.role,
+      status: existingToken.user_status,
+      used: existingToken.used,
+      auth_method: existingToken.auth_method,
+      requires_password_change: existingToken.requires_password_change,
+      has_password: !!existingToken.password_hash
+    });
     
-    try {
-      await client.query("BEGIN");
+    // Check if token already used
+    if (existingToken.used === true) {
+      await client.query('ROLLBACK');
+      console.log('ℹ️ Token already used');
+      
+      if (existingToken.user_status === 'active') {
+        // User already active, generate new token for login
+        const authToken = jwt.sign(
+          {
+            userId: existingToken.user_id,
+            email: existingToken.user_email,
+            role: existingToken.role,
+          },
+          JWT_SECRET,
+          { expiresIn: "24h" }
+        );
 
-      const { user_id, reset_type, password, password_confirmation, send_email } = req.body;
-
-      console.log("🔐 [ADMIN] Password reset request:", req.body);
-
-      // Provjeri da li korisnik postoji
-      const userCheck = await client.query(
-        "SELECT id, email, first_name, last_name, full_name FROM users WHERE id = $1",
-        [user_id]
-      );
-
-      if (userCheck.rows.length === 0) {
-        await client.query("ROLLBACK");
-        return res.status(404).json({
+        // Determine response based on password requirements
+        const response = {
+          success: true,
+          message: "Račun je već aktiviran",
+          token: authToken,
+          user: {
+            id: existingToken.user_id,
+            email: existingToken.user_email,
+            first_name: existingToken.first_name,
+            last_name: existingToken.last_name,
+            full_name: existingToken.full_name,
+            role: existingToken.role,
+            email_verified: true,
+            status: 'active',
+            requires_password_change: existingToken.requires_password_change
+          }
+        };
+        
+        console.log("✅ Account already active, returning user data");
+        return res.json(response);
+      } else {
+        return res.status(400).json({
           success: false,
-          error: "Korisnik nije pronađen",
+          error: "Aktivacijski token je već iskorišten"
         });
       }
-
-      const user = userCheck.rows[0];
-      let newPassword = null;
-
-      // Obradi različite tipove resetiranja
-      if (reset_type === 'manual') {
-        // Ručno postavljanje passworda
-        if (!password || !password_confirmation) {
-          await client.query("ROLLBACK");
-          return res.status(400).json({
-            success: false,
-            error: "Lozinka i potvrda lozinke su obavezni",
-          });
-        }
-
-        if (password !== password_confirmation) {
-          await client.query("ROLLBACK");
-          return res.status(400).json({
-            success: false,
-            error: "Lozinke se ne podudaraju",
-          });
-        }
-
-        if (password.length < 8) {
-          await client.query("ROLLBACK");
-          return res.status(400).json({
-            success: false,
-            error: "Lozinka mora imati najmanje 8 znakova",
-          });
-        }
-
-        newPassword = password;
-
-      } else if (reset_type === 'auto') {
-        // Automatsko generiranje passworda
-        const crypto = await import("crypto");
-        newPassword = crypto.randomBytes(8).toString('hex');
-      }
-
-      // Hash i spremi novi password
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
-      
-      await client.query(
-        "UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
-        [hashedPassword, user_id]
-      );
-
-      let emailSent = false;
-
-      // Pošalji email ako je odabrano
-      if (send_email && newPassword) {
-        console.log("📧 [ADMIN] Sending password reset email to:", user.email);
-        
-        try {
-          // Generiraj password reset token
-          const crypto = await import("crypto");
-          const resetToken = crypto.randomBytes(32).toString('hex');
-          const expiresAt = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 sat
-
-          // Spremi reset token u bazu
-          await client.query(
-            `INSERT INTO verification_tokens 
-             (user_id, token, token_type, expires_at) 
-             VALUES ($1, $2, $3, $4)`,
-            [user_id, resetToken, "password_reset", expiresAt]
-          );
-
-          // POŠALJI PRAVI EMAIL PREKO EMAIL SERVISA
-          if (emailService && emailService.sendPasswordResetEmail) {
-            emailSent = await emailService.sendPasswordResetEmail(
-              user.email,
-              resetToken,
-              user.full_name || `${user.first_name} ${user.last_name}`
-            );
-            
-            console.log("✅ [ADMIN] Password reset email sent via EmailService:", emailSent);
-          } else {
-            console.log("❌ [ADMIN] EmailService not available for password reset");
-          }
-
-        } catch (emailError) {
-          console.error("❌ [ADMIN] Password reset email error:", emailError);
-          // Nastavimo bez emaila - ne failamo cijeli request
-        }
-      }
-
-      await client.query("COMMIT");
-
-      res.json({
-        success: true,
-        message: "Lozinka uspješno resetirana",
-        password_reset: {
-          type: reset_type,
-          email_sent: emailSent,
-          // Vrati password samo za development
-          ...(process.env.NODE_ENV === 'development' && { new_password: newPassword })
-        }
-      });
-
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("❌ Password reset error:", error);
-      res.status(500).json({
-        success: false,
-        error: "Greška pri resetiranju lozinke",
-      });
-    } finally {
-      client.release();
     }
+
+    // Check if token expired
+    if (existingToken.expires_at < new Date()) {
+      await client.query('ROLLBACK');
+      console.log('❌ Token expired');
+      return res.status(400).json({
+        success: false,
+        error: "Aktivacijski token je istekao"
+      });
+    }
+
+    // Token valid - activate user
+    console.log("✅ Valid token, activating user...");
+
+    // Update user as verified
+    await client.query(`
+      UPDATE users 
+      SET 
+        status = 'active',
+        email_verified = true,
+        verified_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $1
+    `, [existingToken.user_id]);
+
+    // Mark token as used
+    await client.query(`
+      UPDATE verification_tokens 
+      SET 
+        used = true,
+        used_at = NOW()
+      WHERE id = $1
+    `, [existingToken.id]);
+
+    // Generate auth token
+    const authToken = jwt.sign(
+      {
+        userId: existingToken.user_id,
+        email: existingToken.user_email,
+        role: existingToken.role,
+      },
+      JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+
+    await client.query('COMMIT');
+
+    console.log('✅ Account verified successfully:', existingToken.user_email);
+
+    // Determine if password change is required
+    const requiresPasswordChange = existingToken.requires_password_change === true;
+
+    // Prepare response
+    const response = {
+      success: true,
+      message: "Račun je uspješno aktiviran",
+      token: authToken,
+      user: {
+        id: existingToken.user_id,
+        email: existingToken.user_email,
+        first_name: existingToken.first_name,
+        last_name: existingToken.last_name,
+        full_name: existingToken.full_name,
+        role: existingToken.role,
+        email_verified: true,
+        status: 'active',
+        requires_password_change: requiresPasswordChange
+      }
+    };
+
+    // If password change is required, add this flag
+    if (requiresPasswordChange) {
+      response.requires_password_change = true;
+      console.log("🔐 Password change required for newly activated user");
+    }
+
+    console.log("✅ Activation response prepared:", {
+      email: existingToken.user_email,
+      role: existingToken.role,
+      requires_password_change: requiresPasswordChange
+    });
+    
+    return res.json(response);
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Account activation error:', error);
+    return res.status(500).json({
+      success: false,
+      error: "Došlo je do greške pri aktivaciji računa"
+    });
+  } finally {
+    client.release();
   }
-);
+});
 
-// ⭐⭐⭐ AUTH ENDPOINTS ⭐⭐⭐
+// ============ RESEND VERIFICATION EMAIL ============
+app.post("/api/auth/resend-verification", async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email je obavezan"
+      });
+    }
+    
+    // Pronađi korisnika
+    const userResult = await client.query(
+      `SELECT id, email, first_name, last_name, full_name, 
+              email_verified, status
+       FROM users WHERE email = $1`,
+      [email]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Korisnik s ovim emailom nije pronađen"
+      });
+    }
+    
+    const user = userResult.rows[0];
+    
+    // Provjeri da li je već verificiran
+    if (user.email_verified) {
+      return res.status(400).json({
+        success: false,
+        message: "Email je već verificiran"
+      });
+    }
+    
+    // Generiraj novi token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    
+    // Obriši stare tokene
+    await client.query(
+      'DELETE FROM verification_tokens WHERE user_id = $1 AND token_type = $2',
+      [user.id, 'account_activation']
+    );
+    
+    // Spremi novi token
+    await client.query(
+      `INSERT INTO verification_tokens (user_id, token, token_type, expires_at)
+       VALUES ($1, $2, $3, $4)`,
+      [user.id, verificationToken, 'account_activation', expiresAt]
+    );
+    
+    // Pošalji email
+    let emailSent = false;
+    try {
+      if (emailService && emailService.sendActivationEmail) {
+        emailSent = await emailService.sendActivationEmail(
+          user.email,
+          verificationToken,
+          user.full_name || user.first_name,
+          'CRM System'
+        );
+        console.log(`📧 Resent activation email to ${user.email}`);
+      }
+    } catch (emailError) {
+      console.error('❌ Error resending activation email:', emailError);
+    }
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: emailSent ? "Verifikacijski email je poslan" : "Token generiran ali email nije poslan",
+      email_sent: emailSent
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Resend verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Greška pri slanju verifikacijskog emaila"
+    });
+  } finally {
+    client.release();
+  }
+});
 
-// LOGIN ENDPOINT - AŽURIRANO sa password_hash
+// ============ AUTH ENDPOINTS ============
+
+// LOGIN ENDPOINT - AŽURIRANO SA PASSWORD CHANGE CHECK
 app.post("/api/auth/login", async (req, res) => {
   console.log("=== LOGIN REQUEST START ===");
 
@@ -1022,82 +610,62 @@ app.post("/api/auth/login", async (req, res) => {
     console.log("🔐 Login attempt for email:", email);
 
     if (!email || !password) {
-      console.log("❌ Missing email or password");
       return res.status(400).json({
         success: false,
         message: "Email and password are required",
       });
     }
 
-    // Pronađi korisnika
-    console.log("🔍 Querying database for user...");
-    const result = await pool.query(`SELECT * FROM users WHERE email = $1`, [
-      email,
-    ]);
-
-    console.log("📊 Database query result - rows found:", result.rows.length);
+    // Find user
+    const result = await pool.query(
+      `SELECT id, email, username, first_name, last_name, full_name, 
+              role, status, auth_method, email_verified, password_hash,
+              company, phone_mobile, department, 
+              can_export, can_manage_clients, can_view_reports,
+              requires_password_change, password_changed_at
+       FROM users WHERE email = $1`,
+      [email]
+    );
 
     if (result.rows.length === 0) {
       console.log("❌ User not found in database");
       return res.status(401).json({
         success: false,
-        message: "Pogrešan email ili lozinka",
+        message: "Incorrect email or password",
       });
     }
 
     const user = result.rows[0];
-    console.log("👤 User found:", {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      status: user.status,
-      auth_method: user.auth_method,
-    });
 
-    // Provjeri status korisnika
+    // Check user status
     if (user.status !== "active") {
       console.log("❌ User account not active:", user.status);
       return res.status(401).json({
         success: false,
-        message: "Vaš račun nije aktiviran. Kontaktirajte administratora.",
+        message: "Your account is not activated. Contact administrator.",
       });
     }
 
-    // Provjeri lozinku - AŽURIRANO za password_hash
-    console.log("🔐 Checking password...");
+    // Check password
     let passwordValid = false;
-
-    if (user.auth_method === "email_password" && user.password_hash) {
-      console.log("🔐 Using password auth method");
-      try {
-        passwordValid = await bcrypt.compare(password, user.password_hash);
-        console.log("🔐 Password comparison result:", passwordValid);
-      } catch (bcryptError) {
-        console.error("❌ Bcrypt error:", bcryptError);
-        // Fallback za development
-        passwordValid = password === "password123";
-        console.log("🔐 Fallback password check:", passwordValid);
-      }
-    } else if (user.auth_method === "email_only") {
-      console.log("📧 Using email-only auth method");
-      // Za email-only korisnike, koristi default lozinku
-      passwordValid = password === "password123";
-      console.log("🔐 Default password check:", passwordValid);
-    } else {
-      console.log("❌ Unknown auth method:", user.auth_method);
-      passwordValid = password === "password123";
+    if (user.password_hash) {
+      passwordValid = await bcrypt.compare(password, user.password_hash);
+    }
+    
+    // Development fallback
+    if (!passwordValid && process.env.NODE_ENV !== 'production' && password === "password123") {
+      passwordValid = true;
+      console.log("🔧 DEV MODE: Password accepted");
     }
 
     if (!passwordValid) {
-      console.log("❌ Invalid password");
       return res.status(401).json({
         success: false,
-        message: "Pogrešan email ili lozinka",
+        message: "Incorrect email or password",
       });
     }
 
-    // Ažuriraj last_login_at i login_count
-    console.log("📝 Updating last login...");
+    // Update last login
     await pool.query(
       `UPDATE users SET 
         last_login_at = CURRENT_TIMESTAMP,
@@ -1106,8 +674,23 @@ app.post("/api/auth/login", async (req, res) => {
       [user.id]
     );
 
-    // Generiraj JWT token
-    console.log("🔑 Generating JWT token...");
+    // Ensure user has proper first_name and full_name
+    let userFirstName = user.first_name;
+    let userFullName = user.full_name;
+    
+    // If first_name is empty, generate from email
+    if (!userFirstName || !userFirstName.trim()) {
+      userFirstName = generateDisplayNameFromEmail(user.email);
+      console.log(`🔄 Auto-generated first_name for login: ${userFirstName}`);
+    }
+    
+    // If full_name is empty, create from first_name + last_name
+    if (!userFullName || !userFullName.trim()) {
+      userFullName = userFirstName + (user.last_name ? ' ' + user.last_name : userFirstName);
+      console.log(`🔄 Auto-generated full_name for login: ${userFullName}`);
+    }
+
+    // Generate JWT token
     const token = jwt.sign(
       {
         userId: user.id,
@@ -1119,19 +702,44 @@ app.post("/api/auth/login", async (req, res) => {
     );
 
     console.log("✅ Login successful for:", user.email);
-    console.log("=== LOGIN REQUEST END ===");
+    console.log("🔍 Password change status:", user.requires_password_change);
 
+    // Check if password change is required
+    if (user.requires_password_change === true) {
+      console.log("⚠️ User requires password change - returning 403 with redirect flag");
+      return res.status(403).json({
+        success: false,
+        message: "Morate promijeniti lozinku pri prvoj prijavi",
+        requires_password_change: true,
+        code: "PASSWORD_CHANGE_REQUIRED",
+        token: token,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          first_name: userFirstName,
+          last_name: user.last_name,
+          full_name: userFullName,
+          role: user.role,
+          email_verified: user.email_verified,
+          status: user.status,
+          requires_password_change: true,
+        }
+      });
+    }
+
+    // Normal successful login
     res.json({
       success: true,
-      message: "Uspješna prijava",
+      message: "Login successful",
       token: token,
       user: {
         id: user.id,
         username: user.username,
         email: user.email,
-        first_name: user.first_name,
+        first_name: userFirstName,
         last_name: user.last_name,
-        full_name: user.full_name,
+        full_name: userFullName,
         role: user.role,
         company: user.company,
         phone_mobile: user.phone_mobile,
@@ -1142,538 +750,1026 @@ app.post("/api/auth/login", async (req, res) => {
         can_export: user.can_export,
         can_manage_clients: user.can_manage_clients,
         can_view_reports: user.can_view_reports,
+        requires_password_change: false, // Explicitly false
+        password_changed_at: user.password_changed_at,
       },
     });
   } catch (error) {
-    console.error("❌ LOGIN ERROR DETAILS:");
-    console.error("❌ Error message:", error.message);
-    console.error("❌ Error stack:", error.stack);
-    console.log("=== LOGIN REQUEST END WITH ERROR ===");
-
+    console.error("❌ Login error:", error);
     res.status(500).json({
       success: false,
-      message: "Greška pri prijavi: " + error.message,
+      message: "Login error",
     });
   }
 });
 
-// VERIFY ACCOUNT BY TOKEN ENDPOINT - REDIRECT NA DASHBOARD
-// VERIFY ACCOUNT BY TOKEN ENDPOINT - POPRAVLJENO
-app.get("/api/auth/verify/:token", async (req, res) => {
-  const client = await pool.connect();
+// CHANGE PASSWORD ENDPOINT (regular password change)
+app.post("/api/auth/change-password", authenticateToken, async (req, res) => {
+  console.log("=== REGULAR PASSWORD CHANGE REQUEST ===");
   
   try {
-    console.log("🎯 VERIFY TOKEN ENDPOINT HIT!");
-    console.log("📧 Token received:", req.params.token);
-
-    await client.query('BEGIN');
-
-    const token = req.params.token;
-
-    // 1. PRVO PROVJERI DA LI TOKEN UOPĆE POSTOJI
-    const tokenExistsCheck = await client.query(`
-      SELECT vt.*, u.id as user_id, u.email as user_email, u.status as user_status,
-             u.first_name, u.last_name, u.full_name, u.role
-      FROM verification_tokens vt
-      JOIN users u ON vt.user_id = u.id
-      WHERE vt.token = $1
-    `, [token]);
-
-    if (tokenExistsCheck.rows.length === 0) {
-      await client.query('ROLLBACK');
-      console.log('❌ Token does not exist:', token);
-      return res.redirect(`http://localhost:5173/activate-account?error=token_not_found`);
-    }
-
-    const existingToken = tokenExistsCheck.rows[0];
+    const { currentPassword, newPassword } = req.body;
     
-    // 2. PROVJERI DA LI JE TOKEN VEĆ KORIŠTEN
-    if (existingToken.used === true) {
-      await client.query('ROLLBACK');
-      console.log('ℹ️ Token already used:', {
-        token: token,
-        used_at: existingToken.used_at,
-        user_email: existingToken.user_email,
-        user_status: existingToken.user_status
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Trenutna i nova lozinka su obavezne"
       });
-
-      // Ako je korisnik već aktiviran, generiraj novi auth token
-      if (existingToken.user_status === 'active') {
-        console.log('🔄 User already active, generating new auth token...');
-        
-        const authToken = jwt.sign(
-          {
-            userId: existingToken.user_id,
-            email: existingToken.user_email,
-            role: existingToken.role,
-          },
-          JWT_SECRET,
-          { expiresIn: "24h" }
-        );
-
-        // ✅ ISPRAVLJENO: Dodaj "autoLogin=true"
-        const redirectUrl = `http://localhost:5173/dashboard?autoLogin=true&token=${authToken}&email=${encodeURIComponent(existingToken.user_email)}&alreadyVerified=true`;
-        console.log("🔀 Redirecting to DASHBOARD (already verified):", redirectUrl);
-        return res.redirect(redirectUrl);
-      } else {
-        // Token je korišten ali korisnik nije aktivan - greška
-        console.log('❌ Token used but user not active:', existingToken.user_status);
-        return res.redirect(`http://localhost:5173/activate-account?error=token_already_used`);
+    }
+    
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Nova lozinka mora imati najmanje 8 karaktera"
+      });
+    }
+    
+    // Get user with password hash
+    const userResult = await pool.query(
+      `SELECT id, password_hash FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Korisnik nije pronađen"
+      });
+    }
+    
+    const user = userResult.rows[0];
+    
+    // Verify current password
+    if (user.password_hash) {
+      const passwordValid = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!passwordValid) {
+        return res.status(401).json({
+          success: false,
+          message: "Trenutna lozinka nije ispravna"
+        });
       }
     }
-
-    // 3. PROVJERI DA LI JE TOKEN ISTEKAO
-    if (existingToken.expires_at < new Date()) {
-      await client.query('ROLLBACK');
-      console.log('❌ Token expired:', {
-        token: token,
-        expires_at: existingToken.expires_at,
-        current_time: new Date()
-      });
-      return res.redirect(`http://localhost:5173/activate-account?error=token_expired`);
-    }
-
-    // 4. TOKEN JE VALIDAN - VERIFICIRAJ KORISNIKA
-    console.log("✅ Valid token found, activating user:", {
-      userId: existingToken.user_id,
-      email: existingToken.user_email
-    });
-
-    // Ažuriraj korisnika kao verificiranog
-    await client.query(`
-      UPDATE users 
-      SET 
-        status = 'active',
-        email_verified = true,
-        verified_at = NOW(),
+    
+    // Hash new password
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    
+    // Update password
+    await pool.query(
+      `UPDATE users SET 
+        password_hash = $1,
+        password_changed_at = NOW(),
         updated_at = NOW()
-      WHERE id = $1
-    `, [existingToken.user_id]);
-
-    // Označi token kao korišten
-    await client.query(`
-      UPDATE verification_tokens 
-      SET 
-        used = true,
-        used_at = NOW()
-      WHERE id = $1
-    `, [existingToken.id]);
-
-    // Dohvati ažuriranog korisnika
-    const userResult = await client.query(`
-      SELECT 
-        id, username, email, first_name, last_name, full_name,
-        role, status, email_verified, auth_method
-      FROM users 
-      WHERE id = $1
-    `, [existingToken.user_id]);
-
-    const user = userResult.rows[0];
-    console.log("👤 User activated:", {
-      email: user.email,
-      status: user.status,
-      email_verified: user.email_verified
+       WHERE id = $2`,
+      [newPasswordHash, req.user.id]
+    );
+    
+    console.log("✅ Regular password changed successfully for user:", req.user.email);
+    
+    res.json({
+      success: true,
+      message: "Lozinka je uspješno promijenjena"
     });
+    
+  } catch (error) {
+    console.error("❌ Change password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Greška pri promjeni lozinke"
+    });
+  }
+});
 
-    // Generiraj auth token
-    const authToken = jwt.sign(
+// FORCE PASSWORD CHANGE ENDPOINT (for users with required password change)
+app.post("/api/auth/force-change-password", authenticateToken, async (req, res) => {
+  console.log("=== FORCE PASSWORD CHANGE REQUEST ===");
+  
+  try {
+    const { newPassword } = req.body;
+    
+    if (!newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Nova lozinka je obavezna"
+      });
+    }
+    
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Lozinka mora imati najmanje 8 karaktera"
+      });
+    }
+    
+    // Verify that user requires password change
+    if (!req.user.requires_password_change) {
+      return res.status(400).json({
+        success: false,
+        message: "Promjena lozinke nije potrebna"
+      });
+    }
+    
+    // Hash new password
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    
+    // Update password and clear the requires_password_change flag
+    await pool.query(
+      `UPDATE users SET 
+        password_hash = $1,
+        requires_password_change = false,
+        password_changed_at = NOW(),
+        updated_at = NOW()
+       WHERE id = $2`,
+      [newPasswordHash, req.user.id]
+    );
+    
+    // Generate new token with updated user info
+    const newToken = jwt.sign(
       {
-        userId: user.id,
-        email: user.email,
-        role: user.role,
+        userId: req.user.id,
+        email: req.user.email,
+        role: req.user.role,
       },
       JWT_SECRET,
       { expiresIn: "24h" }
     );
-
-    await client.query('COMMIT');
-
-    console.log('✅ Account verified successfully via token:', user.email);
-
-    // ✅ ISPRAVLJENO: Redirect na dashboard s autoLogin=true
-    const redirectUrl = `http://localhost:5173/dashboard?autoLogin=true&token=${authToken}&email=${encodeURIComponent(user.email)}&verified=true`;
-    console.log("🔀 Redirecting to DASHBOARD:", redirectUrl);
     
-    return res.redirect(redirectUrl);
-
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('❌ Account verification by token error:', error);
+    console.log("✅ Force password change successful for user:", req.user.email);
     
-    // Redirect na activate-account stranicu s error porukom
-    return res.redirect(`http://localhost:5173/activate-account?error=verification_failed&message=${encodeURIComponent(error.message)}`);
-  } finally {
-    client.release();
-  }
-});
-
-// U server.js dodajte ovaj endpoint
-app.get("/api/auth/auto-login", async (req, res) => {
-  try {
-    const { token, email, verified } = req.query;
-    
-    console.log("🔐 Auto-login request for:", email);
-    
-    if (!token || !email) {
-      return res.redirect(`http://localhost:5173/login?error=auto_login_failed`);
-    }
-
-    // Provjeri da li je token valjan
-    const decoded = jwt.verify(token, JWT_SECRET);
-    
-    const userResult = await pool.query(
-      `SELECT id, email, status FROM users WHERE id = $1 AND email = $2`,
-      [decoded.userId, email]
-    );
-
-    if (userResult.rows.length === 0) {
-      return res.redirect(`http://localhost:5173/login?error=invalid_auto_login`);
-    }
-
-    const user = userResult.rows[0];
-    
-    if (user.status !== 'active') {
-      return res.redirect(`http://localhost:5173/login?error=account_not_active`);
-    }
-
-    console.log('✅ Auto-login successful for:', user.email);
-    
-    // ✅ REDIRECT NA FRONTEND DASHBOARD SA PARAMETRIMA
-    const redirectUrl = `http://localhost:5173/dashboard?autoLogin=true&token=${token}&email=${encodeURIComponent(email)}&verified=${verified || 'true'}`;
-    console.log("🔀 Redirecting to FRONTEND DASHBOARD:", redirectUrl);
-    
-    return res.redirect(redirectUrl);
-
-  } catch (error) {
-    console.error('❌ Auto-login error:', error);
-    
-    if (error.name === 'JsonWebTokenError') {
-      return res.redirect(`http://localhost:5173/login?error=invalid_token`);
-    } else if (error.name === 'TokenExpiredError') {
-      return res.redirect(`http://localhost:5173/login?error=token_expired`);
-    }
-    
-    return res.redirect(`http://localhost:5173/login?error=auto_login_failed`);
-  }
-});
-
-// // VERIFY ACCOUNT BY TOKEN ENDPOINT - SA DETALJNIM DEBUGGINGOM
-// app.get("/api/auth/verify/:token", async (req, res) => {
-//   const client = await pool.connect();
-  
-//   try {
-//     console.log("🎯 VERIFY TOKEN ENDPOINT HIT!");
-//     console.log("📧 Token received:", req.params.token);
-//     console.log("🔍 Full URL:", req.originalUrl);
-
-//     await client.query('BEGIN');
-
-//     const token = req.params.token;
-
-//     // 1. Pronađi validan token - SA DETALJNIM LOGGINGOM
-//     console.log("🔎 Searching for token in database...");
-//     const tokenResult = await client.query(`
-//       SELECT vt.*, u.id as user_id, u.email as user_email, u.status as user_status,
-//              u.first_name, u.last_name, u.full_name, u.role
-//       FROM verification_tokens vt
-//       JOIN users u ON vt.user_id = u.id
-//       WHERE vt.token = $1 
-//         AND vt.token_type = 'account_activation'
-//         AND vt.expires_at > NOW()
-//         AND vt.used = false
-//     `, [token]);
-
-//     console.log("📊 Token query results:", {
-//       rowsFound: tokenResult.rows.length,
-//       token: token,
-//       currentTime: new Date().toISOString()
-//     });
-
-//     if (tokenResult.rows.length === 0) {
-//       // Dodatna provjera za debugging
-//       const expiredCheck = await client.query(`
-//         SELECT vt.*, u.email 
-//         FROM verification_tokens vt
-//         JOIN users u ON vt.user_id = u.id
-//         WHERE vt.token = $1 
-//       `, [token]);
-
-//       console.log("❌ Token not found or invalid. Additional check:", {
-//         anyTokenFound: expiredCheck.rows.length > 0,
-//         tokenDetails: expiredCheck.rows[0] || 'none'
-//       });
-
-//       await client.query('ROLLBACK');
-      
-//       // Redirect na activate-account stranicu s error porukom
-//       return res.redirect(`http://localhost:5173/activate-account?error=invalid_token&token=${token}`);
-//     }
-
-//     const verification = tokenResult.rows[0];
-//     console.log("✅ Valid token found:", {
-//       userId: verification.user_id,
-//       email: verification.user_email,
-//       expiresAt: verification.expires_at,
-//       tokenId: verification.id
-//     });
-
-//     // 2. Ažuriraj korisnika kao verificiranog
-//     console.log("🔄 Activating user...");
-//     await client.query(`
-//       UPDATE users 
-//       SET 
-//         status = 'active',
-//         email_verified = true,
-//         verified_at = NOW(),
-//         updated_at = NOW()
-//       WHERE id = $1
-//     `, [verification.user_id]);
-
-//     // 3. Označi token kao korišten
-//     console.log("🏷️ Marking token as used...");
-//     await client.query(`
-//       UPDATE verification_tokens 
-//       SET 
-//         used = true,
-//         used_at = NOW()
-//       WHERE id = $1
-//     `, [verification.id]);
-
-//     // 4. Dohvati ažuriranog korisnika
-//     const userResult = await client.query(`
-//       SELECT 
-//         id, username, email, first_name, last_name, full_name,
-//         role, status, email_verified, auth_method
-//       FROM users 
-//       WHERE id = $1
-//     `, [verification.user_id]);
-
-//     const user = userResult.rows[0];
-//     console.log("👤 User activated:", {
-//       email: user.email,
-//       status: user.status,
-//       email_verified: user.email_verified
-//     });
-
-//     // 5. Generiraj auth token
-//     const authToken = jwt.sign(
-//       {
-//         userId: user.id,
-//         email: user.email,
-//         role: user.role,
-//       },
-//       JWT_SECRET,
-//       { expiresIn: "24h" }
-//     );
-
-//     // 6. Zabilježi aktivnost
-//     // await client.query(`
-//     //   INSERT INTO user_activity_log (user_id, action, resource_type, resource_id, details)
-//     //   VALUES ($1, $2, $3, $4, $5)
-//     // `, [
-//     //   user.id,
-//     //   'account.verified',
-//     //   'user',
-//     //   user.id,
-//     //   JSON.stringify({ method: 'token_verification' })
-//     // ]);
-
-//     await client.query('COMMIT');
-
-//     console.log('✅ Account verified successfully via token:', user.email);
-
-//     // ✅ POPRAVLJEN REDIRECT - koristite točan URL
-//     const redirectUrl = `http://localhost:5173/activate-account?success=true&token=${authToken}&email=${encodeURIComponent(user.email)}&verified=true`;
-//     console.log("🔀 Redirecting to:", redirectUrl);
-    
-//     return res.redirect(redirectUrl);
-
-//   } catch (error) {
-//     await client.query('ROLLBACK');
-//     console.error('❌ Account verification by token error:', error);
-//     console.error('🔧 Error details:', {
-//       message: error.message,
-//       stack: error.stack
-//     });
-
-    
-    
-//     // Redirect na activate-account stranicu s error porukom
-//     const errorRedirect = `http://localhost:5173/activate-account?error=verification_failed&message=${encodeURIComponent(error.message)}`;
-//     console.log("🔀 Redirecting to error page:", errorRedirect);
-    
-//     return res.redirect(errorRedirect);
-//   } finally {
-//     client.release();
-//   }
-// });
-
-// VERIFY TOKEN ENDPOINT
-app.get("/api/auth/verify", authenticateToken, async (req, res) => {
-  try {
     res.json({
       success: true,
-      user: req.user,
+      message: "Lozinka je uspješno postavljena",
+      token: newToken,
+      user: {
+        ...req.user,
+        requires_password_change: false,
+        password_changed_at: new Date().toISOString()
+      }
     });
+    
   } catch (error) {
-    console.error("Token verification error:", error);
+    console.error("❌ Force change password error:", error);
     res.status(500).json({
       success: false,
-      message: "Greška pri verifikaciji tokena",
+      message: "Greška pri postavljanju lozinke"
     });
   }
 });
 
-// LOGOUT ENDPOINT
-app.post("/api/auth/logout", authenticateToken, async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      message: "Uspješno odjavljen",
-    });
-  } catch (error) {
-    console.error("Logout error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Greška pri odjavi",
-    });
-  }
-});
+// ============ ADMIN ENDPOINTS ============
 
-// FORGOT PASSWORD ENDPOINT - AŽURIRANO SA PRAVIM EMAILOVIMA
-app.post("/api/auth/forgot-password", async (req, res) => {
-  const client = await pool.connect();
-  
-  try {
-    await client.query("BEGIN");
-
-    const { email } = req.body;
-
-    if (!email) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        success: false,
-        message: "Email je obavezan",
-      });
-    }
-
-    console.log("🔐 [AUTH] Forgot password request for:", email);
-
-    // Provjeri da li korisnik postoji
-    const userResult = await client.query(
-      "SELECT id, email, first_name, last_name, full_name FROM users WHERE email = $1",
-      [email]
-    );
-
-    // Uvijek vrati success čak i ako korisnik ne postoji (security best practice)
-    if (userResult.rows.length === 0) {
-      await client.query("COMMIT");
-      return res.json({
-        success: true,
-        message: "Ako email postoji, poslat ćemo vam link za reset lozinke",
-      });
-    }
-
-    const user = userResult.rows[0];
-
-    // Generiraj reset token
-    const crypto = await import("crypto");
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 sat
-
-    // Obriši stare reset tokene
-    await client.query(
-      "DELETE FROM verification_tokens WHERE user_id = $1 AND token_type = $2",
-      [user.id, "password_reset"]
-    );
-
-    // Spremi reset token u bazu
-    await client.query(
-      `INSERT INTO verification_tokens 
-       (user_id, token, token_type, expires_at) 
-       VALUES ($1, $2, $3, $4)`,
-      [user.id, resetToken, "password_reset", expiresAt]
-    );
-
-    let emailSent = false;
-
-    // POŠALJI PRAVI PASSWORD RESET EMAIL
+// GET ALL USERS
+app.get(
+  "/api/admin/users",
+  authenticateToken,
+  requireRole(['admin']),
+  async (req, res) => {
     try {
-      if (emailService && emailService.sendPasswordResetEmail) {
-        emailSent = await emailService.sendPasswordResetEmail(
-          user.email,
-          resetToken,
-          user.full_name || `${user.first_name} ${user.last_name}`
+      const result = await pool.query(
+        `SELECT id, username, email, first_name, last_name, full_name, role, company, 
+              phone_mobile, status, email_verified, auth_method, department,
+              can_export, can_manage_clients, can_view_reports,
+              requires_password_change, password_changed_at,
+              created_at, last_login_at, login_count
+       FROM users ORDER BY created_at DESC`
+      );
+
+      res.json({
+        success: true,
+        data: result.rows,
+        total: result.rows.length,
+      });
+    } catch (error) {
+      console.error("❌ Get users error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error fetching users",
+      });
+    }
+  }
+);
+
+// CREATE USER - SEND ACTIVATION EMAIL SA GENERISANJEM LOZINKE
+app.post(
+  "/api/admin/users",
+  authenticateToken,
+  requireRole(['admin']),
+  async (req, res) => {
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const {
+        email,
+        first_name = "",
+        last_name = "",
+        phone_mobile = "",
+        phone_office = "",
+        company = "",
+        address = "",
+        department = "",
+        role = "user",
+        send_activation_email = true,
+        generate_password = true,
+      } = req.body;
+
+      console.log("🔧 Creating user with data:", { 
+        email, 
+        first_name,
+        last_name,
+        role,
+        generate_password 
+      });
+
+      // VALIDACIJA: Email je obavezan
+      if (!email || !email.trim()) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          error: "Email je obavezno polje",
+        });
+      }
+
+      // Check if email already exists
+      const existingEmailCheck = await client.query(
+        "SELECT id FROM users WHERE email = $1",
+        [email]
+      );
+
+      if (existingEmailCheck.rows.length > 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          error: "Korisnik s ovim emailom već postoji",
+        });
+      }
+
+      // GENERIRAJ PRIVREMENU LOZINKU AKO JE TRAŽENA
+      let temporaryPassword = null;
+      let passwordHash = null;
+      
+      if (generate_password) {
+        temporaryPassword = generateSecurePassword();
+        console.log(`🔐 Generated temporary password for ${email}: ${temporaryPassword}`);
+        passwordHash = await bcrypt.hash(temporaryPassword, 10);
+      }
+
+      // NORMALIZACIJA: Očisti i popuni prazna polja
+      let finalFirstName = first_name ? first_name.trim() : "";
+      let finalLastName = last_name ? last_name.trim() : "";
+      
+      if (!finalFirstName) {
+        finalFirstName = generateDisplayNameFromEmail(email);
+        console.log(`🔄 Auto-generated first_name from email: ${finalFirstName}`);
+      }
+
+      if (!finalLastName) {
+        finalLastName = "Korisnik";
+        console.log(`🔄 Using default last_name: ${finalLastName}`);
+      }
+
+      // Generiraj full_name
+      let finalFullName = `${finalFirstName} ${finalLastName}`.trim();
+      console.log(`🔄 Generated full_name: ${finalFullName}`);
+
+      // GENERIRAJ UNIKATNI USERNAME
+      let baseUsername = email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+      let username = baseUsername;
+      let usernameCounter = 1;
+      let maxAttempts = 100;
+      
+      // Provjeri da li username već postoji i generiraj jedinstveni
+      while (true) {
+        const usernameExists = await client.query(
+          "SELECT id FROM users WHERE username = $1",
+          [username]
         );
         
-        console.log("✅ [AUTH] Password reset email sent via EmailService:", emailSent);
-      } else {
-        console.log("❌ [AUTH] EmailService not available for password reset");
+        if (usernameExists.rows.length === 0) {
+          break; // Username je slobodan
+        }
+        
+        // Generiraj novi username sa brojem
+        username = `${baseUsername}${usernameCounter}`;
+        usernameCounter++;
+        
+        if (usernameCounter > maxAttempts) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            success: false,
+            error: "Nije moguće generirati jedinstveni username. Pokušajte s drugim email-om."
+          });
+        }
       }
-    } catch (emailError) {
-      console.error("❌ [AUTH] Password reset email error:", emailError);
-      // Nastavimo bez emaila
+      
+      console.log(`🔄 Generated unique username: ${username}`);
+
+      // Odredi auth_method
+      const authMethod = generate_password ? "email_password" : "email_only";
+
+      // Create new user
+      const userResult = await client.query(
+        `INSERT INTO users (
+          username, email, first_name, last_name, full_name,
+          phone_mobile, phone_office, company, address, department,
+          auth_method, role, status, email_verified,
+          password_hash, requires_password_change, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        RETURNING *`,
+        [
+          username,
+          email,
+          finalFirstName,
+          finalLastName,
+          finalFullName,
+          phone_mobile,
+          phone_office,
+          company,
+          address,
+          department,
+          authMethod,
+          role,
+          "pending_verification",
+          false,
+          passwordHash,
+          generate_password ? true : false,
+          req.user.id,
+        ]
+      );
+
+      const newUser = userResult.rows[0];
+
+      let activationData = null;
+      let emailSent = false;
+
+      // If selected, generate activation token
+      if (send_activation_email) {
+        const verificationToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+        // Save token
+        await client.query(
+          `INSERT INTO verification_tokens (user_id, token, token_type, expires_at)
+           VALUES ($1, $2, $3, $4)`,
+          [newUser.id, verificationToken, "account_activation", expiresAt]
+        );
+
+        // Send email
+        try {
+          if (emailService && emailService.sendActivationEmail) {
+            emailSent = await emailService.sendActivationEmail(
+              email,
+              verificationToken,
+              finalFullName,
+              req.user.full_name || req.user.username
+            );
+          }
+        } catch (emailError) {
+          console.error("❌ Activation email error:", emailError);
+        }
+
+        activationData = {
+          email_sent: emailSent,
+          activation_token: verificationToken,
+          activation_link: `http://localhost:8888/api/auth/activate/${verificationToken}`
+        };
+      }
+
+      await client.query("COMMIT");
+
+      console.log("✅ User created successfully:", {
+        id: newUser.id,
+        email: newUser.email,
+        username: newUser.username,
+        first_name: newUser.first_name,
+        last_name: newUser.last_name,
+        full_name: newUser.full_name,
+        has_password: !!passwordHash,
+        requires_password_change: newUser.requires_password_change
+      });
+
+      // SAČUVAJ ODGOVOR
+      const response = {
+        success: true,
+        message: generate_password
+          ? "Korisnik kreiran. Privremena lozinka je generisana."
+          : "Korisnik kreiran.",
+        user: {
+          id: newUser.id,
+          username: newUser.username,
+          email: newUser.email,
+          first_name: newUser.first_name,
+          last_name: newUser.last_name,
+          full_name: newUser.full_name,
+          role: newUser.role,
+          status: newUser.status,
+          email_verified: newUser.email_verified,
+          auth_method: newUser.auth_method,
+          requires_password_change: newUser.requires_password_change,
+          created_at: newUser.created_at,
+        },
+        activation: activationData,
+      };
+
+      // DODAJ PRIVREMENU LOZINKU SAMO U ODGOVORU ADMINU
+      if (generate_password && temporaryPassword) {
+        response.temporary_password = temporaryPassword;
+        response.password_note = "Ova lozinka se prikazuje samo jednom. Korisnik će morati promijeniti lozinku pri prvoj prijavi.";
+        response.password_warning = "Kopirajte i spremite ovu lozinku odmah. Neće biti ponovno prikazana.";
+      }
+
+      res.status(201).json(response);
+
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("❌ Create user error:", error);
+      
+      let errorMessage = "Greška pri kreiranju korisnika";
+      
+      // Specifične poruke za različite greške
+      if (error.message.includes("users_username_key") || error.message.includes("duplicate key")) {
+        errorMessage = "Generirani username već postoji u sustavu. Pokušajte ponovo.";
+      } else {
+        errorMessage += ": " + error.message;
+      }
+      
+      res.status(500).json({
+        success: false,
+        error: errorMessage,
+      });
+    } finally {
+      client.release();
     }
-
-    await client.query("COMMIT");
-
-    const response = {
-      success: true,
-      message: "Link za reset lozinke je poslan na vaš email",
-    };
-
-    // U developmentu, vrati i link za lakše testiranje
-    if (process.env.NODE_ENV === 'development') {
-      response.reset_link = `http://localhost:5173/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-    }
-
-    res.json(response);
-
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("❌ Forgot password error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Greška pri slanju zahtjeva za reset lozinke",
-    });
-  } finally {
-    client.release();
   }
-});
+);
 
-// ⭐⭐⭐ CLIENTS ENDPOINTS ⭐⭐⭐
+// GET SINGLE USER
+app.get(
+  "/api/admin/users/:id",
+  authenticateToken,
+  requireRole(['admin']),
+  async (req, res) => {
+    try {
+      const userId = req.params.id;
+      console.log("🔍 GET User ID:", userId);
 
-// GET ALL CLIENTS
+      const result = await pool.query(
+        `SELECT id, username, email, first_name, last_name, full_name, role, company, 
+              phone_mobile, phone_office, address, department,
+              status, email_verified, auth_method,
+              can_export, can_manage_clients, can_view_reports, notes,
+              requires_password_change, password_changed_at,
+              created_at, updated_at, last_login_at, login_count
+       FROM users WHERE id = $1`,
+        [userId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Korisnik nije pronađen'
+        });
+      }
+
+      const user = result.rows[0];
+
+      console.log("✅ User found:", {
+        id: user.id,
+        email: user.email,
+        role: user.role
+      });
+
+      res.json({
+        success: true,
+        user: user
+      });
+
+    } catch (error) {
+      console.error('❌ Get user error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Greška pri dohvaćanju korisnika: ' + error.message
+      });
+    }
+  }
+);
+
+// UPDATE USER
+app.put(
+  "/api/admin/users/:id",
+  authenticateToken,
+  requireRole(['admin']),
+  async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+
+      const userId = req.params.id;
+      const {
+        first_name,
+        last_name,
+        email,
+        phone_mobile,
+        phone_office,
+        company,
+        address,
+        department,
+        role,
+        auth_method,
+        status,
+        email_verified,
+        can_export,
+        can_manage_clients,
+        can_view_reports,
+        notes
+      } = req.body;
+
+      console.log("🔧 Updating user ID:", userId, "with data:", req.body);
+
+      // Provjeri da li korisnik postoji
+      const existingUser = await client.query(
+        "SELECT id, email FROM users WHERE id = $1",
+        [userId]
+      );
+
+      if (existingUser.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          error: 'Korisnik nije pronađen'
+        });
+      }
+
+      // Ako se mijenja email, provjeri da li je novi email slobodan
+      if (email && email !== existingUser.rows[0].email) {
+        const emailCheck = await client.query(
+          "SELECT id FROM users WHERE email = $1 AND id != $2",
+          [email, userId]
+        );
+
+        if (emailCheck.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            success: false,
+            error: 'Email već postoji u sustavu'
+          });
+        }
+      }
+
+      // Generiraj full_name ako se mijenjaju ime/prezime
+      let finalFullName = '';
+      if (first_name || last_name) {
+        const currentUser = await client.query(
+          "SELECT first_name, last_name, full_name FROM users WHERE id = $1",
+          [userId]
+        );
+        
+        const currentFirstName = currentUser.rows[0]?.first_name || '';
+        const currentLastName = currentUser.rows[0]?.last_name || '';
+        
+        const newFirstName = first_name !== undefined ? first_name : currentFirstName;
+        const newLastName = last_name !== undefined ? last_name : currentLastName;
+        
+        finalFullName = `${newFirstName} ${newLastName}`.trim();
+      }
+
+      // Ažuriraj korisnika
+      const updateFields = [];
+      const updateValues = [];
+      let paramIndex = 1;
+
+      if (first_name !== undefined) {
+        updateFields.push(`first_name = $${paramIndex++}`);
+        updateValues.push(first_name);
+      }
+      
+      if (last_name !== undefined) {
+        updateFields.push(`last_name = $${paramIndex++}`);
+        updateValues.push(last_name);
+      }
+      
+      if (email !== undefined) {
+        updateFields.push(`email = $${paramIndex++}`);
+        updateValues.push(email);
+      }
+      
+      if (phone_mobile !== undefined) {
+        updateFields.push(`phone_mobile = $${paramIndex++}`);
+        updateValues.push(phone_mobile);
+      }
+      
+      if (phone_office !== undefined) {
+        updateFields.push(`phone_office = $${paramIndex++}`);
+        updateValues.push(phone_office);
+      }
+      
+      if (company !== undefined) {
+        updateFields.push(`company = $${paramIndex++}`);
+        updateValues.push(company);
+      }
+      
+      if (address !== undefined) {
+        updateFields.push(`address = $${paramIndex++}`);
+        updateValues.push(address);
+      }
+      
+      if (department !== undefined) {
+        updateFields.push(`department = $${paramIndex++}`);
+        updateValues.push(department);
+      }
+      
+      if (role !== undefined) {
+        updateFields.push(`role = $${paramIndex++}`);
+        updateValues.push(role);
+      }
+      
+      if (auth_method !== undefined) {
+        updateFields.push(`auth_method = $${paramIndex++}`);
+        updateValues.push(auth_method);
+      }
+      
+      if (status !== undefined) {
+        updateFields.push(`status = $${paramIndex++}`);
+        updateValues.push(status);
+      }
+      
+      if (email_verified !== undefined) {
+        updateFields.push(`email_verified = $${paramIndex++}`);
+        updateValues.push(email_verified);
+      }
+      
+      if (can_export !== undefined) {
+        updateFields.push(`can_export = $${paramIndex++}`);
+        updateValues.push(can_export);
+      }
+      
+      if (can_manage_clients !== undefined) {
+        updateFields.push(`can_manage_clients = $${paramIndex++}`);
+        updateValues.push(can_manage_clients);
+      }
+      
+      if (can_view_reports !== undefined) {
+        updateFields.push(`can_view_reports = $${paramIndex++}`);
+        updateValues.push(can_view_reports);
+      }
+      
+      if (notes !== undefined) {
+        updateFields.push(`notes = $${paramIndex++}`);
+        updateValues.push(notes);
+      }
+      
+      if (finalFullName) {
+        updateFields.push(`full_name = $${paramIndex++}`);
+        updateValues.push(finalFullName);
+      }
+
+      // Dodaj updated_at
+      updateFields.push(`updated_at = NOW()`);
+
+      if (updateFields.length === 1) { // Samo updated_at
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          error: 'Nema podataka za ažuriranje'
+        });
+      }
+
+      // Izvrši update
+      updateValues.push(userId);
+      
+      const updateQuery = `
+        UPDATE users 
+        SET ${updateFields.join(', ')}
+        WHERE id = $${paramIndex}
+        RETURNING *
+      `;
+
+      const result = await client.query(updateQuery, updateValues);
+      const updatedUser = result.rows[0];
+
+      await client.query('COMMIT');
+
+      console.log("✅ User updated successfully:", {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        first_name: updatedUser.first_name,
+        last_name: updatedUser.last_name,
+        role: updatedUser.role
+      });
+
+      res.json({
+        success: true,
+        message: 'Korisnik uspješno ažuriran',
+        user: updatedUser
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Update user error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Greška pri ažuriranju korisnika: ' + error.message
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// RESEND ACTIVATION EMAIL
+app.post(
+  "/api/admin/users/:id/resend-activation",
+  authenticateToken,
+  requireRole(['admin']),
+  async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+
+      const userId = req.params.id;
+      
+      console.log('🔧 Resending activation for user:', userId);
+
+      // Dohvati korisnika
+      const userResult = await client.query(
+        `SELECT id, email, first_name, last_name, full_name 
+         FROM users WHERE id = $1`,
+        [userId]
+      );
+
+      if (userResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          error: 'Korisnik nije pronađen'
+        });
+      }
+
+      const user = userResult.rows[0];
+
+      // Provjeri da li korisnik već nije aktivan
+      const userStatusCheck = await client.query(
+        `SELECT status, email_verified FROM users WHERE id = $1`,
+        [userId]
+      );
+      
+      if (userStatusCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          error: 'Korisnik nije pronađen'
+        });
+      }
+
+      const userStatus = userStatusCheck.rows[0];
+      
+      if (userStatus.status === 'active' || userStatus.email_verified === true) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          error: 'Korisnik je već aktivan i verificiran'
+        });
+      }
+
+      // Generiraj novi token
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      // Obriši stare tokene za ovog korisnika
+      await client.query(
+        'DELETE FROM verification_tokens WHERE user_id = $1 AND token_type = $2',
+        [userId, 'account_activation']
+      );
+
+      // Spremi novi token
+      await client.query(`
+        INSERT INTO verification_tokens (user_id, token, token_type, expires_at)
+        VALUES ($1, $2, $3, $4)
+      `, [userId, verificationToken, 'account_activation', expiresAt]);
+
+      console.log('🔑 New activation token generated:', verificationToken);
+
+      // POŠALJI EMAIL
+      let emailSent = false;
+      try {
+        if (emailService && emailService.sendActivationEmail) {
+          emailSent = await emailService.sendActivationEmail(
+            user.email,
+            verificationToken,
+            user.full_name || user.first_name,
+            req.user.full_name || req.user.username
+          );
+          console.log(`📧 Activation email sent to ${user.email}:`, emailSent ? 'Success' : 'Failed');
+        } else {
+          console.log('⚠️ Email service not available for resend activation');
+        }
+      } catch (emailError) {
+        console.error('❌ Activation email error:', emailError);
+      }
+
+      await client.query('COMMIT');
+
+      res.json({
+        success: true,
+        message: emailSent ? 'Aktivacijski email ponovno poslan' : 'Token generiran ali email nije poslan',
+        email: {
+          sent: emailSent,
+          to: user.email
+        },
+        activation: {
+          activation_token: verificationToken,
+          activation_link: `http://localhost:8888/api/auth/activate/${verificationToken}`
+        }
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Resend activation error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Greška pri slanju aktivacijskog emaila: ' + error.message
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// RESET USER PASSWORD (admin can reset user's password)
+app.post(
+  "/api/admin/users/:id/reset-password",
+  authenticateToken,
+  requireRole(['admin']),
+  async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+
+      const userId = req.params.id;
+      const { send_email = false } = req.body;
+      
+      console.log('🔧 Resetting password for user:', userId);
+
+      // Dohvati korisnika
+      const userResult = await client.query(
+        `SELECT id, email, first_name, last_name, full_name 
+         FROM users WHERE id = $1`,
+        [userId]
+      );
+
+      if (userResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          error: 'Korisnik nije pronađen'
+        });
+      }
+
+      const user = userResult.rows[0];
+
+      // Generiraj novu privremenu lozinku
+      const temporaryPassword = generateSecurePassword();
+      console.log(`🔐 Generated new password for ${user.email}: ${temporaryPassword}`);
+      
+      // Hash lozinku
+      const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+
+      // Ažuriraj korisnika
+      await client.query(
+        `UPDATE users SET 
+          password_hash = $1,
+          requires_password_change = true,
+          password_changed_at = NULL,
+          updated_at = NOW()
+         WHERE id = $2`,
+        [passwordHash, userId]
+      );
+
+      let emailSent = false;
+      let emailError = null;
+      
+      // Pošalji email sa novom lozinkom ako je traženo
+      if (send_email && emailService) {
+        try {
+          if (emailService.transporter) {
+            console.log(`📧 Sending password reset email to ${user.email}...`);
+            
+            const mailOptions = {
+              from: '"CRM System" <noreply@crm.com>',
+              to: user.email,
+              subject: '🔐 Nova lozinka za CRM sustav',
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h2 style="color: #333;">Nova lozinka za CRM sustav</h2>
+                  <p>Poštovani ${user.full_name || user.first_name || 'korisniče'},</p>
+                  <p>Administrator sustava je generirao novu lozinku za vaš račun.</p>
+                  
+                  <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                    <p style="margin: 0;"><strong>Vaša nova privremena lozinka:</strong></p>
+                    <p style="font-size: 18px; font-weight: bold; color: #dc3545; margin: 10px 0;">
+                      ${temporaryPassword}
+                    </p>
+                  </div>
+                  
+                  <p><strong>Važne napomene:</strong></p>
+                  <ul>
+                    <li>Ova lozinka je privremena</li>
+                    <li>Morat ćete promijeniti lozinku pri sljedećoj prijavi</li>
+                    <li>Lozinku ne dijelite s drugima</li>
+                  </ul>
+                  
+                  <p>Za prijavu koristite svoj email: <strong>${user.email}</strong></p>
+                  
+                  <div style="background-color: #fff3cd; color: #856404; padding: 10px; border-radius: 5px; margin: 20px 0;">
+                    <p style="margin: 0;"><strong>⚠️ Sigurnosna napomena:</strong></p>
+                    <p style="margin: 5px 0 0 0;">Nakon što se prijavite, obavezno promijenite lozinku u nešto što ćete lako pamtiti.</p>
+                  </div>
+                  
+                  <p>Lijep pozdrav,<br>CRM Administratorski tim</p>
+                </div>
+              `
+            };
+            
+            const info = await emailService.transporter.sendMail(mailOptions);
+            emailSent = true;
+            console.log('📧 Password reset email sent successfully:', info.messageId);
+          }
+        } catch (transporterError) {
+          console.error('❌ Error sending password reset email:', transporterError);
+          emailError = transporterError.message;
+        }
+      }
+
+      await client.query('COMMIT');
+
+      // Vrati novu lozinku adminu
+      const response = {
+        success: true,
+        message: 'Lozinka uspješno resetovana',
+        temporary_password: temporaryPassword,
+        password_note: 'Ova lozinka se prikazuje samo jednom. Korisnik će morati promijeniti lozinku pri sljedećoj prijavi.',
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.full_name,
+          requires_password_change: true
+        }
+      };
+
+      // Dodaj informacije o emailu u odgovor
+      if (send_email) {
+        response.email_sent = emailSent;
+        if (!emailSent && emailError) {
+          response.email_error = emailError;
+        }
+      }
+
+      res.json(response);
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Reset password error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Greška pri resetovanju lozinke: ' + error.message
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ============ CLIENTS ENDPOINTS ============
 app.get("/api/clients", authenticateToken, async (req, res) => {
   try {
-    console.log("📋 Fetching clients for user:", req.user.id);
+    let query = "";
+    let params = [];
 
-    let result;
-
-    // Ako je admin, vrati sve klijente
     if (req.user.role === "admin") {
-      result = await pool.query(`
-        SELECT c.*, u.username as created_by_username 
-        FROM clients c 
-        LEFT JOIN users u ON c.created_by = u.id 
-        ORDER BY c.created_at DESC
-      `);
-    } else {
-      // Ako nije admin, vrati samo klijente dodijeljene korisniku
-      result = await pool.query(
-        `
-        SELECT c.*, u.username as created_by_username, uc.is_primary
+      query = `
+        SELECT c.*, u.username as created_by_username,
+               u.email as creator_email
         FROM clients c
-        INNER JOIN user_clients uc ON c.id = uc.client_id
-        LEFT JOIN users u ON c.created_by = u.id 
-        WHERE uc.user_id = $1
+        LEFT JOIN users u ON c.created_by = u.id
         ORDER BY c.created_at DESC
-      `,
-        [req.user.id]
-      );
+      `;
+    } else {
+      query = `
+        SELECT c.*, u.username as created_by_username,
+               u.email as creator_email
+        FROM clients c
+        LEFT JOIN users u ON c.created_by = u.id
+        LEFT JOIN user_clients uc ON c.id = uc.client_id
+        WHERE uc.user_id = $1 OR c.created_by = $1
+        ORDER BY c.created_at DESC
+      `;
+      params = [req.user.id];
     }
 
-    console.log("✅ Clients fetched:", result.rows.length);
+    const result = await pool.query(query, params);
 
     res.json({
       success: true,
@@ -1684,197 +1780,7 @@ app.get("/api/clients", authenticateToken, async (req, res) => {
     console.error("Get clients error:", error);
     res.status(500).json({
       success: false,
-      message: "Greška pri dohvaćanju klijenata",
-    });
-  }
-});
-
-// ⭐⭐⭐ SPECIFIČNE RUTE MORAJU BITI IZNAD DINAMIČKIH RUTA ⭐⭐⭐
-
-// GET CLIENTS STATS
-app.get("/api/clients/stats", authenticateToken, async (req, res) => {
-  try {
-    console.log("📊 Fetching clients stats for user:", req.user.id);
-
-    let totalClients, totalNotes, averageNotes, lastNote;
-
-    // Ukupno klijenata
-    if (req.user.role === "admin") {
-      totalClients = await pool.query("SELECT COUNT(*) FROM clients");
-    } else {
-      totalClients = await pool.query(
-        "SELECT COUNT(*) FROM user_clients WHERE user_id = $1",
-        [req.user.id]
-      );
-    }
-
-    // Ukupno bilješki
-    if (req.user.role === "admin") {
-      totalNotes = await pool.query("SELECT COUNT(*) FROM notes");
-    } else {
-      totalNotes = await pool.query(
-        `
-        SELECT COUNT(*) FROM notes n
-        INNER JOIN user_clients uc ON n.client_id = uc.client_id
-        WHERE uc.user_id = $1
-      `,
-        [req.user.id]
-      );
-    }
-
-    // Prosjek bilješki po klijentu
-    const totalClientsCount = parseInt(totalClients.rows[0].count);
-    const totalNotesCount = parseInt(totalNotes.rows[0].count);
-    averageNotes =
-      totalClientsCount > 0
-        ? (totalNotesCount / totalClientsCount).toFixed(2)
-        : "0.00";
-
-    // Zadnja bilješka
-    if (req.user.role === "admin") {
-      lastNote = await pool.query(`
-        SELECT n.*, c.name as client_name 
-        FROM notes n 
-        LEFT JOIN clients c ON n.client_id = c.id 
-        ORDER BY n.created_at DESC 
-        LIMIT 1
-      `);
-    } else {
-      lastNote = await pool.query(
-        `
-        SELECT n.*, c.name as client_name 
-        FROM notes n 
-        INNER JOIN user_clients uc ON n.client_id = uc.client_id
-        LEFT JOIN clients c ON n.client_id = c.id 
-        WHERE uc.user_id = $1
-        ORDER BY n.created_at DESC 
-        LIMIT 1
-      `,
-        [req.user.id]
-      );
-    }
-
-    const lastNoteData = lastNote.rows.length > 0 ? lastNote.rows[0] : null;
-
-    res.json({
-      success: true,
-      data: {
-        total_clients: totalClientsCount,
-        total_notes: totalNotesCount,
-        average_notes: averageNotes,
-        last_note: lastNoteData,
-      },
-    });
-  } catch (error) {
-    console.error("Get clients stats error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Greška pri dohvaćanju statistike klijenata",
-    });
-  }
-});
-
-// GET NOTES COUNT PER CLIENT
-app.get("/api/clients/notes-count", authenticateToken, async (req, res) => {
-  try {
-    console.log("📝 Fetching notes count per client for user:", req.user.id);
-
-    let result;
-
-    if (req.user.role === "admin") {
-      result = await pool.query(`
-        SELECT 
-          c.id,
-          c.name,
-          c.email,
-          COUNT(n.id) as notes_count
-        FROM clients c
-        LEFT JOIN notes n ON c.id = n.client_id
-        GROUP BY c.id, c.name, c.email
-        ORDER BY c.name
-      `);
-    } else {
-      result = await pool.query(
-        `
-        SELECT 
-          c.id,
-          c.name,
-          c.email,
-          COUNT(n.id) as notes_count
-        FROM clients c
-        INNER JOIN user_clients uc ON c.id = uc.client_id
-        LEFT JOIN notes n ON c.id = n.client_id
-        WHERE uc.user_id = $1
-        GROUP BY c.id, c.name, c.email
-        ORDER BY c.name
-      `,
-        [req.user.id]
-      );
-    }
-
-    console.log("✅ Notes count fetched for clients:", result.rows.length);
-
-    res.json({
-      success: true,
-      data: result.rows,
-    });
-  } catch (error) {
-    console.error("Get notes count error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Greška pri dohvaćanju broja bilješki po klijentu",
-    });
-  }
-});
-
-// ⭐⭐⭐ DINAMIČKE RUTE MORAJU BITI ISPOD SPECIFIČNIH RUTA ⭐⭐⭐
-
-// GET CLIENT BY ID
-app.get("/api/clients/:id", authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await pool.query(
-      `
-      SELECT c.*, u.username as created_by_username 
-      FROM clients c 
-      LEFT JOIN users u ON c.created_by = u.id 
-      WHERE c.id = $1
-    `,
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Klijent nije pronađen",
-      });
-    }
-
-    // Provjeri permisije (samo admin ili dodijeljeni korisnik)
-    if (req.user.role !== "admin") {
-      const userAccess = await pool.query(
-        "SELECT 1 FROM user_clients WHERE user_id = $1 AND client_id = $2",
-        [req.user.id, id]
-      );
-
-      if (userAccess.rows.length === 0) {
-        return res.status(403).json({
-          success: false,
-          message: "Nemate pristup ovom klijentu",
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      data: result.rows[0],
-    });
-  } catch (error) {
-    console.error("Get client error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Greška pri dohvaćanju klijenta",
+      message: "Error fetching clients",
     });
   }
 });
@@ -1882,9 +1788,16 @@ app.get("/api/clients/:id", authenticateToken, async (req, res) => {
 // CREATE CLIENT
 app.post("/api/clients", authenticateToken, async (req, res) => {
   try {
-    const { name, email, company, phone, address, notes } = req.body;
+    const { 
+      name, 
+      email, 
+      company, 
+      phone, 
+      address, 
+      notes
+    } = req.body;
 
-    // Provjeri da li klijent već postoji
+    // Check if client already exists
     const existingClient = await pool.query(
       "SELECT id FROM clients WHERE email = $1",
       [email]
@@ -1893,11 +1806,11 @@ app.post("/api/clients", authenticateToken, async (req, res) => {
     if (existingClient.rows.length > 0) {
       return res.status(400).json({
         success: false,
-        message: "Klijent s ovim emailom već postoji",
+        message: "Client with this email already exists",
       });
     }
 
-    // Kreiraj klijenta
+    // Create client
     const clientResult = await pool.query(
       `INSERT INTO clients 
        (name, email, company, phone, address, notes, created_by) 
@@ -1908,79 +1821,16 @@ app.post("/api/clients", authenticateToken, async (req, res) => {
 
     const client = clientResult.rows[0];
 
-    // Automatski dodijeli klijenta kreatoru (osim ako je admin)
-    if (req.user.role !== "admin") {
-      await pool.query(
-        `INSERT INTO user_clients (user_id, client_id, assigned_by, is_primary)
-         VALUES ($1, $2, $3, TRUE)`,
-        [req.user.id, client.id, req.user.id]
-      );
-    }
-
     res.json({
       success: true,
-      message: "Klijent uspješno kreiran",
+      message: "Client successfully created",
       data: client,
     });
   } catch (error) {
     console.error("Create client error:", error);
     res.status(500).json({
       success: false,
-      message: "Greška pri kreiranju klijenta",
-    });
-  }
-});
-
-// UPDATE CLIENT
-app.put("/api/clients/:id", authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, email, company, phone, address, notes } = req.body;
-
-    // Provjeri da li klijent postoji
-    const existingClient = await pool.query(
-      "SELECT id, created_by FROM clients WHERE id = $1",
-      [id]
-    );
-
-    if (existingClient.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Klijent nije pronađen",
-      });
-    }
-
-    // Provjeri permisije (samo admin ili kreator klijenta)
-    if (
-      req.user.role !== "admin" &&
-      existingClient.rows[0].created_by !== req.user.id
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "Nemate ovlasti za ažuriranje ovog klijenta",
-      });
-    }
-
-    // Ažuriraj klijenta
-    const clientResult = await pool.query(
-      `UPDATE clients 
-       SET name = $1, email = $2, company = $3, phone = $4, address = $5, notes = $6,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7 
-       RETURNING *`,
-      [name, email, company, phone, address, notes, id]
-    );
-
-    res.json({
-      success: true,
-      message: "Klijent uspješno ažuriran",
-      data: clientResult.rows[0],
-    });
-  } catch (error) {
-    console.error("Update client error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Greška pri ažuriranju klijenta",
+      message: "Error creating client",
     });
   }
 });
@@ -1990,7 +1840,7 @@ app.delete("/api/clients/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Provjeri da li klijent postoji
+    // Check if client exists
     const existingClient = await pool.query(
       "SELECT id, created_by FROM clients WHERE id = $1",
       [id]
@@ -1999,44 +1849,40 @@ app.delete("/api/clients/:id", authenticateToken, async (req, res) => {
     if (existingClient.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Klijent nije pronađen",
+        message: "Client not found",
       });
     }
 
-    // Provjeri permisije (samo admin ili kreator klijenta)
+    // Check permissions
     if (
       req.user.role !== "admin" &&
       existingClient.rows[0].created_by !== req.user.id
     ) {
       return res.status(403).json({
         success: false,
-        message: "Nemate ovlasti za brisanje ovog klijenta",
+        message: "You don't have permission to delete this client",
       });
     }
 
-    // Obriši klijenta (CASCADE će obrisati i veze u user_clients)
+    // Delete client
     await pool.query("DELETE FROM clients WHERE id = $1", [id]);
 
     res.json({
       success: true,
-      message: "Klijent uspješno obrisan",
+      message: "Client successfully deleted",
     });
   } catch (error) {
     console.error("Delete client error:", error);
     res.status(500).json({
       success: false,
-      message: "Greška pri brisanju klijenta",
+      message: "Error deleting client",
     });
   }
 });
 
-// ⭐⭐⭐ NOTES ENDPOINTS ⭐⭐⭐
-
-// GET ALL NOTES
+// ============ NOTES ENDPOINTS ============
 app.get("/api/notes", authenticateToken, async (req, res) => {
   try {
-    console.log("📝 Fetching notes for user:", req.user.id);
-
     let result;
 
     if (req.user.role === "admin") {
@@ -2062,8 +1908,6 @@ app.get("/api/notes", authenticateToken, async (req, res) => {
       );
     }
 
-    console.log("✅ Notes fetched:", result.rows.length);
-
     res.json({
       success: true,
       data: result.rows,
@@ -2073,59 +1917,7 @@ app.get("/api/notes", authenticateToken, async (req, res) => {
     console.error("Get notes error:", error);
     res.status(500).json({
       success: false,
-      message: "Greška pri dohvaćanju bilješki",
-    });
-  }
-});
-
-// GET NOTE BY ID
-app.get("/api/notes/:id", authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    let result;
-
-    if (req.user.role === "admin") {
-      result = await pool.query(
-        `
-        SELECT n.*, c.name as client_name, u.username as created_by_username
-        FROM notes n
-        LEFT JOIN clients c ON n.client_id = c.id
-        LEFT JOIN users u ON n.created_by = u.id
-        WHERE n.id = $1
-      `,
-        [id]
-      );
-    } else {
-      result = await pool.query(
-        `
-        SELECT n.*, c.name as client_name, u.username as created_by_username
-        FROM notes n
-        INNER JOIN user_clients uc ON n.client_id = uc.client_id
-        LEFT JOIN clients c ON n.client_id = c.id
-        LEFT JOIN users u ON n.created_by = u.id
-        WHERE n.id = $1 AND uc.user_id = $2
-      `,
-        [id, req.user.id]
-      );
-    }
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Bilješka nije pronađena",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: result.rows[0],
-    });
-  } catch (error) {
-    console.error("Get note error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Greška pri dohvaćanju bilješke",
+      message: "Error fetching notes",
     });
   }
 });
@@ -2135,7 +1927,7 @@ app.post("/api/notes", authenticateToken, async (req, res) => {
   try {
     const { client_id, title, content, note_type = "general" } = req.body;
 
-    // Provjeri da li klijent postoji i ima li korisnik pristup
+    // Check if client exists and user has access
     let clientCheck;
     if (req.user.role === "admin") {
       clientCheck = await pool.query("SELECT id FROM clients WHERE id = $1", [
@@ -2155,11 +1947,11 @@ app.post("/api/notes", authenticateToken, async (req, res) => {
     if (clientCheck.rows.length === 0) {
       return res.status(403).json({
         success: false,
-        message: "Nemate pristup ovom klijentu",
+        message: "You don't have access to this client",
       });
     }
 
-    // Kreiraj bilješku
+    // Create note
     const noteResult = await pool.query(
       `
       INSERT INTO notes 
@@ -2174,89 +1966,24 @@ app.post("/api/notes", authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      message: "Bilješka uspješno kreirana",
+      message: "Note successfully created",
       data: note,
     });
   } catch (error) {
     console.error("Create note error:", error);
     res.status(500).json({
       success: false,
-      message: "Greška pri kreiranju bilješke",
+      message: "Error creating note",
     });
   }
 });
 
-// UPDATE NOTE
-app.put("/api/notes/:id", authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { title, content, note_type } = req.body;
-
-    // Provjeri da li bilješka postoji
-    let noteCheck;
-    if (req.user.role === "admin") {
-      noteCheck = await pool.query("SELECT * FROM notes WHERE id = $1", [id]);
-    } else {
-      noteCheck = await pool.query(
-        `
-        SELECT n.* FROM notes n
-        INNER JOIN user_clients uc ON n.client_id = uc.client_id
-        WHERE n.id = $1 AND uc.user_id = $2
-      `,
-        [id, req.user.id]
-      );
-    }
-
-    if (noteCheck.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Bilješka nije pronađena",
-      });
-    }
-
-    // Provjeri permisije (samo admin ili kreator bilješke)
-    const note = noteCheck.rows[0];
-    if (req.user.role !== "admin" && note.created_by !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: "Nemate ovlasti za ažuriranje ove bilješke",
-      });
-    }
-
-    // Ažuriraj bilješku
-    const updateResult = await pool.query(
-      `
-      UPDATE notes 
-      SET title = $1, content = $2, note_type = $3, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4 
-      RETURNING *
-    `,
-      [title, content, note_type, id]
-    );
-
-    res.json({
-      success: true,
-      message: "Bilješka uspješno ažurirana",
-      data: updateResult.rows[0],
-    });
-  } catch (error) {
-    console.error("Update note error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Greška pri ažuriranju bilješke",
-    });
-  }
-});
-
-// DELETE NOTE - POPRAVLJEN ENDPOINT
+// DELETE NOTE
 app.delete("/api/notes/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(
-      `🗑️ SERVER: DELETE request for note ID: ${id} from user: ${req.user.id}`
-    );
 
-    // Provjeri da li bilješka postoji
+    // Check if note exists
     let noteCheck;
     if (req.user.role === "admin") {
       noteCheck = await pool.query("SELECT * FROM notes WHERE id = $1", [id]);
@@ -2272,165 +1999,110 @@ app.delete("/api/notes/:id", authenticateToken, async (req, res) => {
     }
 
     if (noteCheck.rows.length === 0) {
-      console.log(`❌ SERVER: Note not found: ${id}`);
       return res.status(404).json({
         success: false,
-        message: "Bilješka nije pronađena",
+        message: "Note not found",
       });
     }
 
-    // Provjeri permisije (samo admin ili kreator bilješke)
+    // Check permissions
     const note = noteCheck.rows[0];
     if (req.user.role !== "admin" && note.created_by !== req.user.id) {
-      console.log(
-        `❌ SERVER: User ${req.user.id} not authorized to delete note ${id}`
-      );
       return res.status(403).json({
         success: false,
-        message: "Nemate ovlasti za brisanje ove bilješke",
+        message: "You don't have permission to delete this note",
       });
     }
 
-    // Obriši bilješku
+    // Delete note
     await pool.query("DELETE FROM notes WHERE id = $1", [id]);
-
-    console.log(`✅ SERVER: Note successfully deleted: ${id}`);
 
     res.json({
       success: true,
-      message: "Bilješka uspješno obrisana",
+      message: "Note successfully deleted",
     });
   } catch (error) {
-    console.error("❌ SERVER: Delete note error:", error);
+    console.error("Delete note error:", error);
     res.status(500).json({
       success: false,
-      message: "Greška pri brisanju bilješke: " + error.message,
+      message: "Error deleting note",
     });
   }
 });
 
-// HEALTH CHECK ENDPOINT
+// ============ HEALTH CHECK ============
 app.get("/api/health", async (req, res) => {
   try {
-    const dbConnected = await testConnection();
-
+    await pool.query("SELECT 1");
     res.json({
       success: true,
-      message: "CRM API is running",
-      database: dbConnected ? "connected" : "disconnected",
-      email_service: !!emailService,
+      message: "API is running",
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "API health check failed",
-      error: error.message,
+      message: "Database connection failed",
     });
   }
 });
 
-// TEST ENDPOINT
-app.get("/api/test", (req, res) => {
-  console.log("✅ Test endpoint called");
-  res.json({
-    success: true,
-    message: "Server is working!",
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// TEST DELETE ENDPOINT
-app.delete("/api/test-delete/:id", authenticateToken, async (req, res) => {
-  console.log("✅ TEST DELETE ENDPOINT CALLED");
-  res.json({
-    success: true,
-    message: "Test delete endpoint works!",
-    noteId: req.params.id,
-    user: req.user.id,
-  });
-});
-
-// Default route
-app.get("/", (req, res) => {
-  res.json({
-    message: "CRM API Server",
-    version: "1.0.0",
-    database: "PostgreSQL",
-    email_service: !!emailService ? "Available" : "Not available",
-    mailcatcher_url: "http://localhost:1080",
-    endpoints: {
-      auth: [
-        "/api/auth/login",
-        "/api/auth/verify-account",
-        "/api/auth/verify/:token",
-        "/api/auth/verify",
-        "/api/auth/logout",
-        "/api/auth/forgot-password",
-      ],
-      clients: [
-        "/api/clients",
-        "/api/clients/:id",
-        "/api/clients (POST)",
-        "/api/clients/:id (PUT)",
-        "/api/clients/:id (DELETE)",
-      ],
-      notes: [
-        "/api/notes",
-        "/api/notes/:id",
-        "/api/notes (POST)",
-        "/api/notes/:id (PUT)",
-        "/api/notes/:id (DELETE)",
-      ],
-      stats: ["/api/clients/stats", "/api/clients/notes-count"],
-      admin: [
-        "GET /api/admin/users",
-        "POST /api/admin/users",
-        "PUT /api/admin/users/:id",
-        "DELETE /api/admin/users/:id",
-        "POST /api/admin/users/:id/resend-activation",
-        "GET /api/admin/stats",
-        "GET /api/admin/health",
-        "POST /api/admin/users/reset-password",
-      ],
-      utility: ["/api/health", "/api/test", "/api/test-delete/:id"],
-    },
-  });
-});
-
-// Initialize database and start server
+// ============ START SERVER ============
 const PORT = 8888;
-
-initDatabase()
-  .then(async () => {
-    await testConnection();
-
-    app.listen(PORT, () => {
-      console.log("\n🚀 =================================");
-      console.log("🚀 CRM API Server running!");
-      console.log("🚀 =================================");
-      console.log(`📍 Port: ${PORT}`);
-      console.log(`📍 Base URL: http://localhost:${PORT}`);
-      console.log("📧 Email verification: AKTIVNA (PRAVI EMAILOVI)");
-      console.log("📧 MailCatcher URL: http://localhost:1080");
-      console.log("🔐 JWT Auth: AKTIVAN");
-      console.log("🗄️ Database: PostgreSQL");
-      console.log("🔑 Default password for all users: password123");
-      console.log("📋 Available endpoints:");
-      console.log("   GET    /api/clients");
-      console.log("   GET    /api/clients/stats");
-      console.log("   GET    /api/clients/notes-count");
-      console.log("   GET    /api/notes");
-      console.log("   POST   /api/notes");
-      console.log("   PUT    /api/notes/:id");
-      console.log("   DELETE /api/notes/:id");
-      console.log("   DELETE /api/test-delete/:id (TEST)");
-      console.log("   ADMIN  /api/admin/* (FULL ADMIN SUITE)");
-      console.log("   AUTH   /api/auth/* (LOGIN, VERIFY, etc.)");
-      console.log("=================================\n");
-    });
-  })
-  .catch((error) => {
-    console.error("❌ Failed to start server:", error);
-    process.exit(1);
-  });
+app.listen(PORT, () => {
+  console.log("\n🚀 CRM API Server running!");
+  console.log(`📍 Port: ${PORT}`);
+  console.log(`📍 Base URL: http://localhost:${PORT}`);
+  console.log("🔐 JWT Auth: ACTIVE");
+  console.log("🔐 Password Security: ENHANCED");
+  console.log("📧 Email verification: ACTIVE");
+  console.log("🎯 Role-based redirect: ACTIVE");
+  console.log("🔀 Admin → /admin");
+  console.log("🔀 User/Manager → /dashboard");
+  console.log("\n📋 NEW SECURITY FEATURES:");
+  console.log("   ✅ Temporary password generation");
+  console.log("   ✅ Force password change on first login");
+  console.log("   ✅ Secure password hashing");
+  console.log("   ✅ Admin password reset");
+  console.log("   ✅ Unique username generation");
+  console.log("\n🔑 PASSWORD CHANGE FLOW IMPROVEMENTS:");
+  console.log("   ✅ Activation endpoint returns JSON with requires_password_change flag");
+  console.log("   ✅ Login endpoint returns 403 with requires_password_change flag");
+  console.log("   ✅ Force password change endpoint clears requires_password_change flag");
+  console.log("   ✅ Backend properly tracks requires_password_change status");
+  console.log("\n📋 Available endpoints:");
+  console.log("   GET    /api/auth/verify/:token (NEW - for email verification)");
+  console.log("   GET    /api/auth/activate/:token (existing - for activation)");
+  console.log("   POST   /api/auth/resend-verification (NEW)");
+  console.log("   POST   /api/auth/login");
+  console.log("   GET    /api/auth/verify (for token verification)");
+  console.log("   POST   /api/auth/change-password");
+  console.log("   POST   /api/auth/force-change-password");
+  console.log("   GET    /api/clients");
+  console.log("   POST   /api/clients");
+  console.log("   GET    /api/notes");
+  console.log("   POST   /api/notes");
+  console.log("   GET    /api/admin/users");
+  console.log("   POST   /api/admin/users (with password generation)");
+  console.log("   PUT    /api/admin/users/:id");
+  console.log("   POST   /api/admin/users/:id/resend-activation");
+  console.log("   POST   /api/admin/users/:id/reset-password");
+  console.log("   GET    /api/health");
+  console.log("\n👤 Role-based Middleware:");
+  console.log("   - requireRole(['admin']) → admin access only");
+  console.log("   - requireRole(['admin', 'manager']) → admin or manager");
+  console.log("\n🔐 PASSWORD SECURITY FLOW:");
+  console.log("   1. Admin creates user with generated password");
+  console.log("   2. User activates account → returns requires_password_change: true");
+  console.log("   3. Frontend sees flag → redirects to /change-password");
+  console.log("   4. User changes password → flag cleared");
+  console.log("   5. User can now access dashboard/admin");
+  console.log("\n📧 EMAIL ENDPOINTS:");
+  console.log("   - /api/auth/verify/:token - verifies email token");
+  console.log("   - /api/auth/resend-verification - resends verification email");
+  console.log("\n🆔 Username Generation:");
+  console.log("   - Automatically generates unique username from email");
+  console.log("   - Adds numbers if username already exists");
+  console.log("   - Ensures no duplicate usernames in database");
+  console.log("=================================\n");
+});

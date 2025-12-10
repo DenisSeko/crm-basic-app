@@ -1,17 +1,37 @@
 <!-- src/components/admin/AdminLayout.vue -->
 <template>
   <div class="admin-layout">
-    <!-- Debug Banner -->
-    <div v-if="showDebug" style="background: #dc2626; color: white; padding: 12px 20px; position: fixed; top: 0; left: 0; right: 0; z-index: 10000; display: flex; justify-content: space-between; align-items: center;">
+    <!-- Debug Banner (Development Only) -->
+    <div v-if="showDebug && isDevelopment" style="background: #dc2626; color: white; padding: 12px 20px; position: fixed; top: 0; left: 0; right: 0; z-index: 10000; display: flex; justify-content: space-between; align-items: center;">
       <div>
         <strong>🔧 ADMIN LAYOUT JE AKTIVAN - DEBUG MODE</strong>
         <div style="font-size: 12px; margin-top: 4px;">
-          User: {{ user?.name }} | Role: {{ user?.role }} | Auth: {{ isAuthenticated }} | Admin: {{ isAdmin }}
+          User: {{ user?.email }} | Role: {{ user?.role }} | Auth: {{ isAuthenticated }} | Admin: {{ isAdmin }}
         </div>
       </div>
       <button @click="showDebug = false" style="background: white; color: #dc2626; border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;">
         Sakrij debug
       </button>
+    </div>
+
+    <!-- Auto-Login Success Banner -->
+    <div v-if="showAutoLoginSuccess" class="auto-login-banner">
+      <div class="banner-content">
+        <div class="flex items-center gap-2">
+          <div class="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
+            <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <span class="font-medium">Dobrodošli Admin! 👑</span>
+        </div>
+        <p class="text-sm">Vaš admin račun <strong>{{ autoLoginEmail }}</strong> je uspješno aktiviran.</p>
+        <button @click="showAutoLoginSuccess = false" class="close-btn">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <!-- Admin Header -->
@@ -27,7 +47,7 @@
         </div>
         <div class="header-right">
           <div class="user-menu">
-            <span class="user-info">{{ user?.name }} ({{ user?.email }})</span>
+            <span class="user-info">{{ user?.email || 'Admin' }}</span>
             <button @click="logout" class="logout-btn" :disabled="loading">
               {{ loading ? 'Odjavljivanje...' : 'Odjava' }}
             </button>
@@ -98,7 +118,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { authHelper, authAPI } from '@/services/api'  // Promijenjeno na @/
+import { authHelper } from '@/services/api'  // Promijenjeno na @/
 
 export default {
   name: 'AdminLayout',
@@ -108,7 +128,10 @@ export default {
     const loading = ref(false)
     const user = ref(authHelper.getUser())
     const showDebug = ref(true)
+    const showAutoLoginSuccess = ref(false)
+    const autoLoginEmail = ref('')
 
+    const isDevelopment = import.meta.env.DEV
     const isAuthenticated = computed(() => authHelper.isAuthenticated())
     const isAdmin = computed(() => authHelper.isAdmin())
 
@@ -123,10 +146,55 @@ export default {
       return titleMap[route.name] || 'Admin Panel'
     })
 
+    // Handle auto-login success message
+    const handleAutoLogin = () => {
+      try {
+        const urlParams = new URLSearchParams(window.location.search)
+        const autoLogin = urlParams.get('autoLogin')
+        const token = urlParams.get('token')
+        const email = urlParams.get('email')
+        const verified = urlParams.get('verified')
+        const alreadyVerified = urlParams.get('alreadyVerified')
+
+        console.log('👑 AdminLayout checking auto-login parameters:', { 
+          autoLogin, token, email, verified, alreadyVerified
+        })
+
+        if (autoLogin === 'true' && token && email) {
+          console.log('🔐 Admin auto-login detected for:', email)
+          
+          // Spremi token i korisničke podatke
+          authHelper.setAuth(token, {
+            email: email,
+            email_verified: verified === 'true' || alreadyVerified === 'true',
+            role: 'admin'
+          })
+          
+          autoLoginEmail.value = email
+          
+          // Očisti URL parametre
+          const cleanUrl = window.location.origin + window.location.pathname
+          window.history.replaceState({}, document.title, cleanUrl)
+          
+          // Prikaži success poruku
+          showAutoLoginSuccess.value = true
+          
+          console.log('✅ Admin auto-login successful!')
+          
+          // Automatski sakrij poruku nakon 5 sekundi
+          setTimeout(() => {
+            showAutoLoginSuccess.value = false
+          }, 5000)
+        }
+      } catch (error) {
+        console.error('❌ Admin auto-login error:', error)
+      }
+    }
+
     const logout = async () => {
       try {
         loading.value = true
-        await authAPI.logout()
+        authHelper.clearAuth()
         router.push('/login')
       } catch (error) {
         console.error('Greška pri odjavi:', error)
@@ -145,6 +213,9 @@ export default {
         admin: isAdmin.value,
         user: user.value
       })
+
+      // Prvo obradi auto-login
+      handleAutoLogin()
 
       if (!isAuthenticated.value) {
         console.log('🚫 Nije prijavljen, redirect na login')
@@ -165,6 +236,9 @@ export default {
       loading,
       user,
       showDebug,
+      showAutoLoginSuccess,
+      autoLoginEmail,
+      isDevelopment,
       isAuthenticated,
       isAdmin,
       pageTitle,
@@ -178,6 +252,57 @@ export default {
 .admin-layout {
   min-height: 100vh;
   background: #f8fafc;
+}
+
+.auto-login-banner {
+  background: #10b981;
+  color: white;
+  padding: 12px 20px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10000;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  animation: slideDown 0.5s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 16px;
+}
+
+.banner-content p {
+  margin: 0;
+  flex: 1;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.close-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .admin-header {

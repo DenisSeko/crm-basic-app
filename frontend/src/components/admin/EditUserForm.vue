@@ -227,7 +227,7 @@
             </div>
           </div>
 
-          <!-- Password Reset -->
+          <!-- Password Reset Section -->
           <div class="form-section">
             <div class="section-header">
               <h3>🔐 Resetiranje Lozinke</h3>
@@ -247,7 +247,7 @@
                 <input type="radio" v-model="passwordOption" value="auto" class="option-radio" />
                 <span class="option-content">
                   <strong>Generiraj novu lozinku</strong>
-                  <span>Sustav će automatski generirati sigurnu lozinku i poslati je korisniku putem emaila</span>
+                  <span>Sustav će automatski generirati sigurnu lozinku</span>
                 </span>
               </label>
 
@@ -303,6 +303,7 @@
               </div>
             </div>
 
+            <!-- Email Notification Option -->
             <div v-if="passwordOption !== 'keep'" class="password-notification">
               <label class="checkbox-label">
                 <input type="checkbox" v-model="form.send_password_email" class="checkbox" />
@@ -312,6 +313,23 @@
               <p class="notification-hint">
                 Korisnik će dobiti email s novim podacima za prijavu.
               </p>
+            </div>
+
+            <!-- Temporary Password Display -->
+            <div v-if="temporaryPassword.show" class="temporary-password-alert">
+              <div class="alert-icon">🔐</div>
+              <div class="alert-content">
+                <h4>Nova lozinka generirana!</h4>
+                <p class="password-display">
+                  <strong>Lozinka:</strong> 
+                  <span class="password-value">{{ temporaryPassword.value }}</span>
+                </p>
+                <p class="alert-warning">
+                  ⚠️ Ova lozinka se prikazuje samo jednom. Kopirajte je odmah i spremite na sigurno mjesto.
+                  Korisnik će morati promijeniti lozinku pri sljedećoj prijavi.
+                </p>
+              </div>
+              <button @click="temporaryPassword.show = false" class="alert-close">✕</button>
             </div>
           </div>
 
@@ -347,14 +365,14 @@
               </span>
             </div>
             <div class="action-buttons">
-              <button type="button" @click="resetForm" class="btn-outline" :disabled="!hasChanges || loading">
+              <button type="button" @click="resetForm" class="btn-outline" :disabled="!hasChanges || saving">
                 ❌ Odbaci Promjene
               </button>
-              <button type="button" @click="saveForm" class="btn-secondary" :disabled="!hasChanges || loading">
-                💾 Spremi Promjene
+              <button type="button" @click="saveForm" class="btn-secondary" :disabled="!hasChanges || saving">
+                {{ saving ? '💾 Spremanje...' : '💾 Spremi Promjene' }}
               </button>
-              <button type="button" @click="saveAndContinue" class="btn-primary" :disabled="loading">
-                {{ loading ? 'Spremanje...' : '🚀 Spremi i Nastavi' }}
+              <button type="button" @click="saveAndContinue" class="btn-primary" :disabled="saving">
+                {{ saving ? '🚀 Spremanje...' : '🚀 Spremi i Nastavi' }}
               </button>
             </div>
           </div>
@@ -435,7 +453,10 @@ export default {
   setup() {
     const router = useRouter()
     const route = useRoute()
+    
+    // Refs
     const loading = ref(false)
+    const saving = ref(false)
     const actionLoading = ref(false)
     const showPassword = ref(false)
     const passwordOption = ref('keep')
@@ -443,6 +464,13 @@ export default {
     const showSuccessToast = ref(false)
     const user = ref(null)
     const userActivity = ref([])
+    const currentUser = ref(authHelper.getUser())
+    
+    // Reactive objects
+    const temporaryPassword = reactive({
+      show: false,
+      value: ''
+    })
 
     const form = reactive({
       first_name: '',
@@ -467,10 +495,13 @@ export default {
     const originalForm = reactive({})
     const errors = reactive({})
 
-    const currentUser = ref(authHelper.getUser())
-    const userId = computed(() => route.params.id)
-
     // Computed properties
+    const userId = computed(() => {
+      const id = route.params.id
+      console.log('🔍 User ID from route:', id, 'Type:', typeof id)
+      return id
+    })
+
     const hasChanges = computed(() => {
       return Object.keys(form).some(key => {
         if (key === 'password' || key === 'password_confirmation') {
@@ -506,14 +537,18 @@ export default {
 
         // POKUŠAJ DIREKTNU RUTU PRVO
         try {
-          console.log('📍 Pokušavam direktnu rutu /api/admin/users/' + userId.value)
+          console.log('📍 Pokušavam direktnu rutu za ID:', userId.value)
 
-          // Koristi novu getUserById metodu
-          const directResponse = await adminAPI.getUserById(userId.value)
+          // Koristi getUser metodu
+          const directResponse = await adminAPI.getUser(userId.value)
 
-          if (directResponse.success && directResponse.data) {
-            user.value = directResponse.data
+          if (directResponse.success && directResponse.user) {
+            user.value = directResponse.user
             console.log('✅ Korisnik pronađen preko direktne rute:', user.value)
+          } else if (directResponse.success && directResponse.data) {
+            // Backward compatibility
+            user.value = directResponse.data
+            console.log('✅ Korisnik pronađen (backward compat):', user.value)
           } else {
             throw new Error('Direktna ruta vratila prazne podatke')
           }
@@ -547,6 +582,15 @@ export default {
         if (user.value) {
           console.log('📝 Inicijaliziram formu s podacima:', user.value)
 
+          // Resetiraj formu prije inicijalizacije
+          Object.keys(form).forEach(key => {
+            if (typeof form[key] === 'boolean') {
+              form[key] = false
+            } else {
+              form[key] = ''
+            }
+          })
+
           // Koristit first_name i last_name direktno iz user objekta
           form.first_name = user.value.first_name || ''
           form.last_name = user.value.last_name || ''
@@ -578,7 +622,7 @@ export default {
 
           // Spremi originalne vrijednosti za detekciju promjena
           Object.keys(form).forEach(key => {
-            originalForm[key] = form[key]
+            originalForm[key] = typeof form[key] === 'object' ? JSON.parse(JSON.stringify(form[key])) : form[key]
           })
 
           console.log('✅ Forma uspješno inicijalizirana:', form)
@@ -673,43 +717,63 @@ export default {
       return isValid
     }
 
-    // NOVA FUNKCIJA: Password reset
     const handlePasswordReset = async () => {
       try {
-        console.log('🔐 Handling password reset for user:', userId.value)
+        console.log('🔐 [FRONTEND] Processing password reset for user ID:', userId.value)
         
-        const passwordData = {
-          user_id: userId.value,
-          reset_type: passwordOption.value,
-          send_email: form.send_password_email
+        const userIdToSend = Number(userId.value)
+        
+        if (isNaN(userIdToSend)) {
+          throw new Error(`Nevažeći ID korisnika: ${userId.value}`)
         }
-
-        // Dodaj password polja za manual reset
-        if (passwordOption.value === 'manual') {
-          passwordData.password = form.password
-          passwordData.password_confirmation = form.password_confirmation
+        
+        console.log('📤 [FRONTEND] Calling resetUserPassword with:', {
+          userId: userIdToSend,
+          sendEmail: form.send_password_email,
+          type: passwordOption.value
+        })
+        
+        const response = await adminAPI.resetUserPassword(
+          userIdToSend,
+          form.send_password_email
+        )
+        
+        console.log('✅ [FRONTEND] Password reset API response:', response)
+        
+        if (passwordOption.value === 'auto' && response.temporary_password) {
+          temporaryPassword.value = response.temporary_password
+          temporaryPassword.show = true
+          console.log('🔐 [FRONTEND] Temporary password generated and displayed')
         }
-
-        console.log('📡 [FRONTEND] Sending password reset request:', passwordData)
-        
-        const response = await adminAPI.resetUserPassword(passwordData)
-        
-        console.log('✅ [FRONTEND] Password reset successful:', response)
         
         return response
 
       } catch (error) {
-        console.error('❌ Password reset failed:', error)
-        throw new Error('Greška pri resetiranju lozinke: ' + (error.response?.data?.error || error.message))
+        console.error('❌ [FRONTEND] Password reset failed:', error)
+        
+        let errorMessage = 'Greška pri resetiranju lozinke: '
+        
+        if (error.response?.data?.error) {
+          errorMessage += error.response.data.error
+        } else if (error.message.includes('invalid input syntax for type integer')) {
+          errorMessage = 'Interna greška: Pogrešan format ID-a. Kontaktirajte administratora.'
+        } else {
+          errorMessage += error.message
+        }
+        
+        throw new Error(errorMessage)
       }
     }
 
     const saveForm = async () => {
-      if (!validateForm()) return
+      if (!validateForm()) {
+        return
+      }
 
       try {
-        loading.value = true
+        saving.value = true
 
+        // Pripremi podatke za ažuriranje (bez password polja)
         const updateData = {
           first_name: form.first_name,
           last_name: form.last_name,
@@ -728,78 +792,103 @@ export default {
 
         console.log('💾 [FRONTEND] Sending UPDATE data:', updateData)
         console.log('👤 [FRONTEND] User ID:', userId.value)
+        console.log('🔐 [FRONTEND] Password option:', passwordOption.value)
 
         // 1. Ažuriraj osnovne podatke korisnika
-        const response = await adminAPI.updateUser(userId.value, updateData)
+        const updateResponse = await adminAPI.updateUser(userId.value, updateData)
+        console.log('✅ [FRONTEND] Basic update response:', updateResponse)
 
-        console.log('✅ [FRONTEND] Update response:', response)
+        let passwordResetResponse = null
+        
+        // 2. Ako je odabran password reset, obradi ga
+        if (passwordOption.value !== 'keep') {
+          console.log('🔐 [FRONTEND] Starting password reset process...')
+          passwordResetResponse = await handlePasswordReset()
+          console.log('✅ [FRONTEND] Password reset completed:', passwordResetResponse)
+        }
 
-        if (response && response.success) {
-          // 2. Ako je odabran password reset, obradi ga
-          if (passwordOption.value !== 'keep') {
-            console.log('🔐 [FRONTEND] Processing password reset...')
-            await handlePasswordReset()
-          }
-
-          // Ažuriraj lokalne podatke
+        // 3. Ažuriraj lokalne podatke
+        if (updateResponse.user) {
+          user.value = updateResponse.user
+        } else if (updateResponse.data) {
+          user.value = updateResponse.data
+        } else {
+          // Fallback: update sa form podacima
           user.value = {
             ...user.value,
             ...updateData,
             full_name: `${form.first_name} ${form.last_name}`.trim()
           }
+        }
 
-          // Update original form
-          Object.keys(updateData).forEach(key => {
-            if (key in originalForm) {
-              originalForm[key] = form[key]
-            }
-          })
-
-          // Reset password polja nakon uspješnog spremanja
-          if (passwordOption.value === 'manual') {
-            form.password = ''
-            form.password_confirmation = ''
-            originalForm.password = ''
-            originalForm.password_confirmation = ''
+        // 4. Update original form
+        Object.keys(updateData).forEach(key => {
+          if (key in originalForm) {
+            originalForm[key] = form[key]
           }
+        })
 
-          // Reset password option nakon uspješnog spremanja
-          passwordOption.value = 'keep'
+        // 5. Reset password polja nakon uspješnog spremanja
+        if (passwordOption.value === 'manual') {
+          form.password = ''
+          form.password_confirmation = ''
+          originalForm.password = ''
+          originalForm.password_confirmation = ''
+        }
 
-          showSuccessToast.value = true
-          setTimeout(() => {
-            showSuccessToast.value = false
-          }, 5000)
+        // 6. Reset password option nakon uspješnog spremanja
+        passwordOption.value = 'keep'
 
-          console.log('🎉 [FRONTEND] User updated successfully in frontend')
-        } else {
-          console.error('❌ [FRONTEND] Update response indicates failure:', response)
-          throw new Error(response?.error || 'Update failed')
+        // 7. Prikaži uspješnu poruku
+        showSuccessToast.value = true
+        setTimeout(() => {
+          showSuccessToast.value = false
+        }, 5000)
+
+        console.log('🎉 [FRONTEND] User updated successfully')
+
+        return {
+          success: true,
+          update: updateResponse,
+          passwordReset: passwordResetResponse
         }
 
       } catch (error) {
         console.error('💥 [FRONTEND] Update error details:')
         console.error('💥 Error object:', error)
-        console.error('💥 Error response:', error.response?.data)
+        console.error('💥 Error response data:', error.response?.data)
+        console.error('💥 Error status:', error.response?.status)
         console.error('💥 Error message:', error.message)
 
         let userMessage = 'Došlo je do greške pri ažuriranju korisnika'
 
-        if (error.response?.data?.userMessage) {
-          userMessage = error.response.data.userMessage
-        } else if (error.response?.data?.error) {
+        if (error.response?.data?.error) {
           userMessage = error.response.data.error
+        } else if (error.message) {
+          userMessage = error.message
         }
 
         alert(userMessage)
+        
+        throw error
+
       } finally {
-        loading.value = false
+        saving.value = false
       }
     }
 
     const saveAndContinue = async () => {
-      await saveForm()
-      router.push('/admin/users')
+      try {
+        const result = await saveForm()
+        
+        if (result?.success) {
+          setTimeout(() => {
+            router.push('/admin/users')
+          }, 1000)
+        }
+      } catch (error) {
+        // Greška je već prikazana u saveForm
+      }
     }
 
     const resetForm = () => {
@@ -812,6 +901,7 @@ export default {
       })
       passwordOption.value = 'keep'
       Object.keys(errors).forEach(key => errors[key] = '')
+      temporaryPassword.show = false
     }
 
     const refreshUser = () => {
@@ -916,11 +1006,13 @@ export default {
 
     return {
       loading,
+      saving,
       actionLoading,
       showPassword,
       passwordOption,
       showDeleteModal,
       showSuccessToast,
+      temporaryPassword,
       user,
       userActivity,
       form,
@@ -948,6 +1040,7 @@ export default {
 </script>
 
 <style scoped>
+/* CSS ostaje isti kao u vašem kodu */
 .edit-user-form {
   padding: 0;
 }
@@ -1423,6 +1516,66 @@ textarea.form-input:focus {
   margin: 0.5rem 0 0 1.75rem;
 }
 
+.temporary-password-alert {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-radius: 0.75rem;
+  border: 2px solid #0ea5e9;
+  margin-top: 1.5rem;
+}
+
+.alert-icon {
+  font-size: 2rem;
+  flex-shrink: 0;
+}
+
+.alert-content {
+  flex: 1;
+}
+
+.alert-content h4 {
+  margin: 0 0 0.5rem 0;
+  color: #0369a1;
+  font-size: 1.125rem;
+}
+
+.password-display {
+  background: white;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  border: 2px solid #38bdf8;
+  font-family: 'Courier New', monospace;
+  margin: 0.5rem 0;
+}
+
+.password-value {
+  color: #0284c7;
+  font-weight: bold;
+  font-size: 1.1rem;
+  letter-spacing: 0.05em;
+  user-select: all;
+}
+
+.alert-warning {
+  color: #64748b;
+  font-size: 0.875rem;
+  margin: 0.75rem 0 0 0;
+  line-height: 1.5;
+}
+
+.alert-close {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: #64748b;
+  padding: 0.25rem;
+  align-self: flex-start;
+}
+
 .danger-actions {
   display: flex;
   flex-direction: column;
@@ -1564,7 +1717,6 @@ textarea.form-input:focus {
   font-size: 0.75rem;
 }
 
-/* Modal Styles */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -1664,7 +1816,6 @@ textarea.form-input:focus {
   border-top: 1px solid #e2e8f0;
 }
 
-/* Success Toast */
 .success-toast {
   position: fixed;
   top: 2rem;
@@ -1714,7 +1865,6 @@ textarea.form-input:focus {
   justify-content: center;
 }
 
-/* Button Styles */
 .btn-primary {
   background: #3b82f6;
   color: white;
@@ -1811,7 +1961,6 @@ textarea.form-input:focus {
   }
 }
 
-/* Responsive */
 @media (max-width: 1024px) {
   .user-summary-card {
     flex-direction: column;
@@ -1856,6 +2005,15 @@ textarea.form-input:focus {
     left: 1rem;
     right: 1rem;
     top: 1rem;
+  }
+  
+  .temporary-password-alert {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .alert-icon {
+    font-size: 1.5rem;
   }
 }
 </style>

@@ -5,26 +5,17 @@ import App from './App.vue'
 import './style.css'
 import { authHelper } from './services/api'
 
-// ⭐⭐⭐ SAMO POTREBNE KOMPONENTE ZA ACTIVATION FLOW ⭐⭐⭐
+// Komponente
 import HomePage from './components/HomePage.vue'
 import AuthManager from './components/AuthManager.vue'
 import Dashboard from './components/Dashboard.vue'
 import Activation from './components/Activation.vue'
+import ChangePassword from './components/ChangePassword.vue' // 🔴 NOVO: Import ChangePassword
 
-// Kreiraj router instance
+// Router
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    // ⭐⭐⭐ ACTIVATION ROUTE - PRIORITET ⭐⭐⭐
-    {
-      path: '/activate',
-      name: 'Activation',
-      component: Activation,
-      meta: { 
-        requiresGuest: true,
-        title: 'Aktivacija Računa - CRM Sustav'
-      }
-    },
     {
       path: '/',
       name: 'Home',
@@ -52,17 +43,35 @@ const router = createRouter({
       }
     },
     {
+      path: '/activate',
+      name: 'Activation',
+      component: Activation,
+      meta: { 
+        requiresGuest: true,
+        title: 'Aktivacija Računa'
+      }
+    },
+    // 🔴 NOVO: Change password route
+    {
+      path: '/change-password',
+      name: 'ChangePassword',
+      component: ChangePassword,
+      meta: { 
+        requiresAuth: true, // Zahtjeva autentifikaciju
+        requiresPasswordChange: false, // Nije flag, rutu treba pristupiti
+        title: 'Promjena Lozinke - CRM Sustav'
+      }
+    },
+    {
       path: '/dashboard',
       name: 'Dashboard',
       component: Dashboard,
       meta: { 
         requiresAuth: true,
-        requiresVerified: true,
+        requiresPasswordChanged: true, // 🔴 NOVO: Treba da je lozinka promijenjena
         title: 'Dashboard - CRM Sustav'
       }
     },
-    
-    // ⭐⭐⭐ ADMIN RUTE ⭐⭐⭐
     {
       path: '/admin',
       name: 'Admin',
@@ -70,7 +79,7 @@ const router = createRouter({
       meta: { 
         requiresAuth: true,
         requiresAdmin: true,
-        requiresVerified: true,
+        requiresPasswordChanged: true, // 🔴 NOVO: Admin također treba promijeniti lozinku
         title: 'Admin Panel - CRM Sustav'
       },
       children: [
@@ -78,30 +87,49 @@ const router = createRouter({
           path: '',
           name: 'AdminDashboard',
           component: () => import('./components/admin/AdminDashboard.vue'),
-          meta: { title: 'Admin Dashboard' }
+          meta: { 
+            requiresPasswordChanged: true,
+            title: 'Admin Dashboard' 
+          }
         },
         {
           path: 'users',
           name: 'UserManagement',
           component: () => import('./components/admin/UserManagement.vue'),
-          meta: { title: 'Upravljanje Korisnicima' }
+          meta: { 
+            requiresPasswordChanged: true,
+            title: 'Upravljanje Korisnicima' 
+          }
         },
         {
           path: 'users/create',
           name: 'CreateUser',
           component: () => import('./components/admin/CreateUserForm.vue'),
-          meta: { title: 'Dodaj Novog Korisnika' }
+          meta: { 
+            requiresPasswordChanged: true,
+            title: 'Dodaj Novog Korisnika' 
+          }
         },
         {
           path: 'users/:id/edit',
           name: 'EditUser',
           component: () => import('./components/admin/EditUserForm.vue'),
-          meta: { title: 'Uredi Korisnika' }
+          meta: { 
+            requiresPasswordChanged: true,
+            title: 'Uredi Korisnika' 
+          }
+        },
+        {
+          path: 'settings',
+          name: 'AdminSettings',
+          component: () => import('./components/admin/AdminSettings.vue'),
+          meta: { 
+            requiresPasswordChanged: true,
+            title: 'Admin Postavke' 
+          }
         }
       ]
     },
-    
-    // ⭐⭐⭐ WILDCARD ROUTE ⭐⭐⭐
     {
       path: '/:pathMatch(.*)*',
       redirect: '/'
@@ -109,63 +137,171 @@ const router = createRouter({
   ]
 })
 
-// Globalni navigation guard - AUTO-LOGIN JE ABSOLUTNI PRIORITET
-router.beforeEach((to, from, next) => {
-  console.log('🛡️ Route Guard:', to.name || to.path, 'Query:', to.query)
+// 🔴 NOVO: Enhanced navigation guard sa PASSWORD CHANGE FLOW
+router.beforeEach(async (to, from, next) => {
+  console.log('🛡️ Route guard:', {
+    to: to.name,
+    path: to.path,
+    query: to.query,
+    meta: to.meta
+  })
   
-  // 🎯 KRITIČNO: AUTO-LOGIN HANDLING - MORA BITI PRVI!
-  if (to.query.autoLogin === 'true' && to.query.token && to.query.email) {
-    console.log('🔐 AUTO-LOGIN DETEKTIRAN - OBRADUJEM!', {
+  // 🎯 HANDLE PASSWORD CHANGE REDIRECT FROM VERIFY ENDPOINT
+  const hasPasswordChangeRedirect = to.query.requires_password_change === 'true' || 
+                                   to.query.initial_setup === 'true'
+  const hasToken = to.query.token
+  const hasEmail = to.query.email
+  
+  // 📌 SCENARIO 1: Password change redirect from verification email
+  if (hasPasswordChangeRedirect && hasToken && hasEmail) {
+    console.log('🔐 PASSWORD CHANGE REDIRECT DETEKTIRAN:', {
       email: to.query.email,
-      tokenLength: to.query.token?.length || 0,
-      verified: to.query.verified
+      requires_password_change: to.query.requires_password_change,
+      initial_setup: to.query.initial_setup,
+      verified: to.query.verified,
+      alreadyVerified: to.query.alreadyVerified
     })
     
     try {
-      // Spremi token i podatke
+      // Spremi token i osnovne podatke
       authHelper.setAuth(to.query.token, {
         email: to.query.email,
-        email_verified: to.query.verified === 'true',
-        role: 'user',
-        first_name: to.query.email.split('@')[0]
+        email_verified: to.query.verified === 'true' || to.query.alreadyVerified === 'true',
+        requires_password_change: true, // 🔴 Oznaka da treba promijeniti lozinku
+        role: 'user' // privremeno
       })
       
-      console.log('✅ Auto-login uspješan! Korisnik prijavljen.')
+      console.log('✅ Auth podaci spremljeni, redirect na change-password...')
       
-      // Očisti URL parametre
-      const cleanUrl = window.location.origin + '/dashboard'
-      window.history.replaceState({}, document.title, cleanUrl)
-      
-      // Redirect na dashboard
-      next('/dashboard')
+      // Redirect na change-password sa potrebnim parametrima
+      next({
+        path: '/change-password',
+        query: {
+          requires_password_change: 'true',
+          initial_setup: to.query.initial_setup || 'true',
+          email: to.query.email,
+          token: to.query.token
+        }
+      })
       return
       
     } catch (error) {
-      console.error('❌ Auto-login greška:', error)
-      next('/login')
+      console.error('❌ Password change redirect error:', error)
+      authHelper.clearAuth()
+      next('/login?error=password_change_failed')
+      return
+    }
+  }
+  
+  // 🎯 SCENARIO 2: Auto-login without password change required
+  const hasAutoLogin = to.query.autoLogin === 'true'
+  if (hasAutoLogin && hasToken && hasEmail && !hasPasswordChangeRedirect) {
+    console.log('🔐 AUTO-LOGIN DETEKTIRAN (bez password change):', {
+      email: to.query.email,
+      verified: to.query.verified,
+      tokenPreview: to.query.token ? `${to.query.token.substring(0, 20)}...` : 'no token'
+    })
+    
+    try {
+      // 1. Spremi token i osnovne podatke
+      authHelper.setAuth(to.query.token, {
+        email: to.query.email,
+        email_verified: to.query.verified === 'true' || to.query.alreadyVerified === 'true',
+        role: 'user'
+      })
+      
+      console.log('✅ Token spremljen, verificiram...')
+      
+      // 2. Pokušaj verificirati sa backendom
+      try {
+        const verifyResponse = await fetch('http://localhost:8888/api/auth/verify', {
+          headers: {
+            'Authorization': `Bearer ${to.query.token}`
+          }
+        })
+        
+        if (verifyResponse.ok) {
+          const data = await verifyResponse.json()
+          console.log('✅ Backend verification:', {
+            role: data.user.role,
+            email: data.user.email,
+            verified: data.user.email_verified,
+            requires_password_change: data.user.requires_password_change
+          })
+          
+          // Ažuriraj user podatke
+          authHelper.setAuth(to.query.token, data.user)
+          
+          // 🔴 PROVIERI DA LI KORISNIK TREBA PROMIJENITI LOZINKU
+          if (data.user.requires_password_change === true) {
+            console.log('🔴 User requires password change, redirecting to change-password')
+            
+            // Očisti URL parametre
+            const cleanUrl = window.location.origin + window.location.pathname
+            window.history.replaceState({}, document.title, cleanUrl)
+            
+            // Redirect na change-password
+            next('/change-password')
+            return
+          }
+          
+          // Očisti URL parametre
+          const cleanUrl = window.location.origin + window.location.pathname
+          window.history.replaceState({}, document.title, cleanUrl)
+          
+          // 🎯 REDIRECT OVISNO O ROLE (ako je lozinka već promijenjena)
+          if (data.user.role === 'admin') {
+            console.log('👑 ADMIN → redirect na /admin')
+            next('/admin')
+          } else {
+            console.log('👤 USER/MANAGER → redirect na /dashboard')
+            next('/dashboard')
+          }
+        } else {
+          console.warn('⚠️ Backend verification failed, using default route')
+          const cleanUrl = window.location.origin + '/dashboard'
+          window.history.replaceState({}, document.title, cleanUrl)
+          next('/dashboard')
+        }
+      } catch (verifyError) {
+        console.error('❌ Backend verification error:', verifyError)
+        const cleanUrl = window.location.origin + '/dashboard'
+        window.history.replaceState({}, document.title, cleanUrl)
+        next('/dashboard')
+      }
+      
+      return
+      
+    } catch (error) {
+      console.error('❌ Auto-login processing error:', error)
+      authHelper.clearAuth()
+      next('/login?error=auto_login_failed')
       return
     }
   }
 
+  // Standardne provjere
   const isAuthenticated = authHelper.isAuthenticated()
   const user = authHelper.getUser()
-  const isEmailVerified = user?.email_verified
   const isAdmin = user?.role === 'admin'
+  const requiresPasswordChange = user?.requires_password_change === true
   
-  console.log('🔐 Auth status u guardu:', {
-    isAuthenticated,
-    user: user ? { email: user.email, verified: user.email_verified } : null,
-    isAdmin
+  console.log('🔐 Auth status:', { 
+    isAuthenticated, 
+    role: user?.role,
+    isAdmin,
+    requiresPasswordChange,
+    userEmail: user?.email
   })
 
-  // Postavi naslov stranice
+  // Postavi naslov
   if (to.meta.title) {
     document.title = to.meta.title
   }
 
-  // 🔗 ACTIVATION LINK HANDLING - SAMO ZA OBIČNE ACTIVATION LINKOVE
+  // Handle activation links (bez autoLogin flag-a)
   if (to.query.token && to.query.email && !to.query.autoLogin && to.path !== '/activate') {
-    console.log('🔗 Običan activation link detektiran, preusmjeravam na /activate')
+    console.log('🔗 Activation link, redirecting to /activate')
     next({
       path: '/activate',
       query: to.query
@@ -173,187 +309,149 @@ router.beforeEach((to, from, next) => {
     return
   }
   
-  // 🚫 ADMIN RUTE PROVJERA
-  if (to.meta.requiresAdmin) {
-    if (!isAuthenticated) {
-      console.log('🚫 Admin pristup odbijen: Korisnik nije prijavljen')
-      localStorage.setItem('intended_url', to.fullPath)
-      next({ 
-        name: 'Login',
-        query: { 
-          redirect: to.fullPath,
-          message: 'Morate biti prijavljeni za pristup admin panelu'
-        }
-      })
-      return
-    }
-    
-    if (!isAdmin) {
-      console.log('🚫 Admin pristup odbijen: Korisnik nije admin')
-      next({ 
-        name: 'Dashboard',
-        query: { 
-          message: 'Nemate ovlaštenja za pristup admin panelu'
-        }
-      })
-      return
-    }
-    
-    if (to.meta.requiresVerified && !isEmailVerified) {
-      console.log('📧 Admin pristup odbijen: Račun nije aktiviran')
-      next({ 
-        path: '/activate',
-        query: { 
-          email: user?.email,
-          message: 'Morate aktivirati račun prije pristupa admin panelu'
-        }
-      })
-      return
-    }
+  // 🔴 NOVO: PASSWORD CHANGE ENFORCEMENT
+  // Ako korisnik treba promijeniti lozinku, blokiraj pristup svim rutama osim /change-password
+  if (isAuthenticated && requiresPasswordChange && to.path !== '/change-password') {
+    console.log('🔴 User needs password change, redirecting to /change-password')
+    next('/change-password')
+    return
+  }
+  
+  // 🔴 NOVO: Blokiraj pristup rutama koje zahtijevaju promijenjenu lozinku
+  if (isAuthenticated && to.meta.requiresPasswordChanged && requiresPasswordChange) {
+    console.log('🚫 Access denied: Password not changed yet')
+    next('/change-password')
+    return
+  }
+  
+  // Admin provjera (samo ako je lozinka promijenjena)
+  if (to.meta.requiresAdmin && !isAdmin) {
+    console.log('🚫 Admin access denied - redirecting to dashboard')
+    next('/dashboard')
+    return
   }
 
-  // 🔐 AUTH RUTE PROVJERA
-  if (to.meta.requiresAuth) {
-    if (!isAuthenticated) {
-      console.log('🚫 Pristup odbijen: Korisnik nije prijavljen')
-      localStorage.setItem('intended_url', to.fullPath)
-      next({ 
-        name: 'Login',
-        query: { 
-          redirect: to.fullPath,
-          message: 'Morate biti prijavljeni za pristup ovoj stranici'
-        }
-      })
-      return
-    }
-    
-    if (to.meta.requiresVerified && !isEmailVerified) {
-      console.log('📧 Pristup odbijen: Račun nije aktiviran')
-      const userEmail = user?.email || localStorage.getItem('pending_verification_email')
-      next({ 
-        path: '/activate',
-        query: { 
-          email: userEmail,
-          message: 'Morate aktivirati račun prije pristupa'
-        }
-      })
-      return
-    }
+  // Auth provjera
+  if (to.meta.requiresAuth && !isAuthenticated) {
+    console.log('🚫 Auth required - redirecting to login')
+    next('/login')
+    return
   }
   
-  // 👤 GUEST RUTE PROVJERA
+  // Guest provjera
   if (to.meta.requiresGuest && isAuthenticated) {
-    console.log('🔐 Korisnik je već prijavljen, preusmjeravam...')
-    
-    if (isEmailVerified) {
-      const intendedUrl = localStorage.getItem('intended_url')
-      if (intendedUrl && intendedUrl !== '/dashboard') {
-        localStorage.removeItem('intended_url')
-        next(intendedUrl)
-      } else {
-        next('/dashboard')
-      }
+    console.log('🔐 Already authenticated - redirecting based on role')
+    // Ako treba promijeniti lozinku, pošalji na change-password
+    if (requiresPasswordChange) {
+      next('/change-password')
     } else {
-      const userEmail = user?.email || localStorage.getItem('pending_verification_email')
-      next({ 
-        path: '/activate',
-        query: { email: userEmail }
-      })
+      next(isAdmin ? '/admin' : '/dashboard')
     }
     return
   }
   
-  // 🎯 SPECIFIČNE RUTE HANDLING
-  if ((to.name === 'Login' || to.name === 'Register') && isAuthenticated && isEmailVerified) {
-    console.log('🔐 Korisnik je već prijavljen i aktiviran, preusmjeravam na dashboard')
-    next('/dashboard')
+  // Already logged in check za login/register/activate
+  if ((to.name === 'Login' || to.name === 'Register' || to.name === 'Activation') && isAuthenticated) {
+    console.log('🔐 Already logged in - checking password change')
+    // Ako treba promijeniti lozinku, pošalji na change-password
+    if (requiresPasswordChange) {
+      next('/change-password')
+    } else {
+      next(isAdmin ? '/admin' : '/dashboard')
+    }
     return
   }
   
-  if (to.name === 'Activation' && isAuthenticated && isEmailVerified) {
-    console.log('✅ Račun je već aktiviran, preusmjeravam na dashboard')
-    next('/dashboard')
+  // 🔴 NOVO: Allow access to change-password even if requires_password_change = false
+  // (za regular password change)
+  if (to.path === '/change-password' && isAuthenticated && !requiresPasswordChange && !to.query.requires_password_change) {
+    console.log('🔧 Regular password change access allowed')
+    next()
     return
   }
   
-  // ✅ SVE JE U REDU - NASTAVI
-  console.log('✅ Route guard prošao, nastavljam na:', to.name)
   next()
 })
 
-// Kreiraj Vue aplikaciju
+// 🔴 NOVO: Globalna funkcija za provjeru password change statusa
+const checkPasswordChangeStatus = () => {
+  const user = authHelper.getUser()
+  if (user?.requires_password_change === true) {
+    console.log('🔴 Password change required for user:', user.email)
+    return true
+  }
+  return false
+}
+
+// Kreiraj aplikaciju
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
 
-// Development debug funkcije
+// Dev debug
 if (import.meta.env.DEV) {
+  // Globalne debug funkcije
   window.clearAuth = () => {
     authHelper.clearAuth()
-    localStorage.removeItem('pending_verification_email')
-    localStorage.removeItem('intended_url')
-    console.log('🔐 Auth očišćen')
+    console.log('🔐 Auth cleared')
     window.location.reload()
   }
   
-  console.log('🔧 Development mode - debug features enabled')
-  console.log('🐛 Debug funkcije:')
+  window.debugRoutes = () => {
+    const routes = router.getRoutes()
+    console.log('🛣️ Available routes:', routes.map(r => ({
+      name: r.name,
+      path: r.path,
+      meta: r.meta
+    })))
+  }
+  
+  window.goToRoute = (routeName) => {
+    router.push({ name: routeName })
+    console.log(`🛣️ Navigating to route: ${routeName}`)
+  }
+  
+  window.simulatePasswordChangeRequired = () => {
+    const user = authHelper.getUser()
+    if (user) {
+      user.requires_password_change = true
+      authHelper.setUser(user)
+      console.log('🔴 Simulated password change required for:', user.email)
+      window.location.reload()
+    }
+  }
+  
+  window.clearPasswordChangeFlag = () => {
+    const user = authHelper.getUser()
+    if (user) {
+      user.requires_password_change = false
+      authHelper.setUser(user)
+      console.log('🟢 Cleared password change flag for:', user.email)
+      window.location.reload()
+    }
+  }
+  
+  window.checkPasswordChange = checkPasswordChangeStatus
+  
+  console.log('🔧 Development mode - debug available')
   console.log('   - clearAuth() - očisti auth podatke')
+  console.log('   - debugRoutes() - prikaži dostupne rute')
+  console.log('   - goToRoute("AdminSettings") - idi na AdminSettings')
+  console.log('   - simulatePasswordChangeRequired() - simuliraj password change required')
+  console.log('   - clearPasswordChangeFlag() - očisti password change flag')
+  console.log('   - checkPasswordChange() - provjeri password change status')
 }
 
 app.mount('#app')
 
 console.log('🚀 Vue CRM aplikacija pokrenuta!')
-console.log('📍 Clean router - optimiziran za activation flow')
-console.log('🔐 Auth status:', {
-  isAuthenticated: authHelper.isAuthenticated(),
-  user: authHelper.getUser() ? { 
-    email: authHelper.getUser().email,
-    role: authHelper.getUser().role,
-    verified: authHelper.getUser().email_verified 
-  } : 'Nema korisnika'
-})
+console.log('🔐 Initial auth status:', authHelper.getAuthInfo())
 
-// Dev-only features
-// if (import.meta.env.DEV) {
-//   console.log('🔧 Development mode - debug features enabled')
-  
-//   window.__CRM_DEBUG__ = {
-//     auth: authHelper,
-//     router,
-//     routes: router.getRoutes(),
-//     clearAuth: () => {
-//       authHelper.clearAuth()
-//       localStorage.removeItem('pending_verification_email')
-//       localStorage.removeItem('intended_url')
-//       window.location.reload()
-//     },
-//     testActivation: (email = 'test@crm.com') => {
-//       const token = 'test-token-' + Date.now()
-//       const activationUrl = `http://localhost:5173/activate?token=${token}&email=${email}`
-//       console.log('🔗 Test activation URL:', activationUrl)
-//       return activationUrl
-//     },
-//     simulateAdmin: () => {
-//       const adminUser = {
-//         id: 1,
-//         email: 'admin@crm.com',
-//         name: 'Admin User',
-//         role: 'admin',
-//         email_verified: true
-//       }
-//       authHelper.setAuth('fake-admin-token', adminUser)
-//       console.log('👑 Simuliran admin user:', adminUser)
-//       window.location.reload()
-//     },
-//     testAutoLogin: (email = 'test@crm.com') => {
-//       const token = 'fake-jwt-token-' + Date.now()
-//       const autoLoginUrl = `http://localhost:5173/dashboard?autoLogin=true&token=${token}&email=${email}&verified=true`
-//       console.log('🔐 Test auto-login URL:', autoLoginUrl)
-//       return autoLoginUrl
-//     }
-//   }
-  
-  console.log('🐛 Debug dostupan na window.__CRM_DEBUG__')
-
-  
+// 🔴 NOVO: Periodic check for password change requirement
+setInterval(() => {
+  const requiresChange = checkPasswordChangeStatus()
+  if (requiresChange && window.location.pathname !== '/change-password') {
+    console.log('🔄 Periodic check: Password change required, redirecting...')
+    router.push('/change-password')
+  }
+}, 30000) // Provjeri svakih 30 sekundi

@@ -17,15 +17,20 @@
 
         <!-- User info ili status -->
         <div class="flex items-center space-x-4">
-          <template v-if="user">
+          <template v-if="displayUser">
             <!-- User info -->
             <div class="flex items-center space-x-3 bg-gray-50 rounded-lg px-3 py-2">
               <div class="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold text-sm">
-                {{ getUserInitials(user) }}
+                {{ getUserInitial(displayUser) }}
               </div>
               <div class="hidden md:block">
-                <div class="text-sm font-medium text-gray-700">{{ user.firstName }} {{ user.lastName }}</div>
-                <div class="text-xs text-gray-500 capitalize">{{ user.role }}</div>
+                <!-- Prikaz imena korisnika -->
+                <div class="text-sm font-medium text-gray-700">
+                  {{ getUserDisplayName(displayUser) }}
+                </div>
+                <div class="text-xs text-gray-500 capitalize">
+                  {{ formatUserRole(displayUser.role) }}
+                </div>
               </div>
             </div>
             
@@ -58,7 +63,10 @@
 </template>
 
 <script setup>
-defineProps({
+import { computed } from 'vue'
+import { authHelper } from '../services/api'
+
+const props = defineProps({
   user: {
     type: Object,
     default: null
@@ -67,12 +75,148 @@ defineProps({
 
 defineEmits(['go-home', 'logout'])
 
-// Helper funkcija za dobivanje inicijala korisnika
-const getUserInitials = (user) => {
+// KLJUČNO: Computed property koja koristi i props i direktno authHelper
+const displayUser = computed(() => {
+  // Prvo koristi props.user (od App.vue)
+  if (props.user) {
+    console.log('👤 AppHeader: Using user from props:', {
+      display_name: props.user.display_name,
+      first_name: props.user.first_name,
+      email: props.user.email
+    })
+    return props.user
+  }
+  
+  // Ako props.user nije dostupan, probaj iz authHelper
+  const authUser = authHelper.getUser()
+  if (authUser) {
+    console.log('👤 AppHeader: Using user from authHelper:', {
+      display_name: authUser.display_name,
+      first_name: authUser.first_name,
+      email: authUser.email
+    })
+    return authUser
+  }
+  
+  console.log('👤 AppHeader: No user available')
+  return null
+})
+
+// PAMETNA METODA: Dobivanje prikaznog imena korisnika s logikom prioriteta
+const getUserDisplayName = (user) => {
+  if (!user) {
+    console.log('👤 getUserDisplayName: No user object')
+    return 'Korisnik'
+  }
+  
+  // Debug info
+  const debugInfo = {
+    display_name: user.display_name,
+    first_name: user.first_name,
+    last_name: user.last_name,
+    username: user.username,
+    email: user.email,
+    id: user.id
+  }
+  
+  // 1. POKUŠAJ: display_name (ako postoji i nije prazan)
+  if (user.display_name && user.display_name.trim()) {
+    console.log('✅ Using display_name:', user.display_name, 'Debug:', debugInfo)
+    return user.display_name.trim()
+  }
+  
+  // 2. POKUŠAJ: first_name (ako postoji i nije prazan)
+  if (user.first_name && user.first_name.trim()) {
+    console.log('✅ Using first_name:', user.first_name, 'Debug:', debugInfo)
+    return user.first_name.trim()
+  }
+  
+  // 3. POKUŠAJ: username (ako postoji i nije prazan)
+  if (user.username && user.username.trim()) {
+    console.log('✅ Using username:', user.username, 'Debug:', debugInfo)
+    return user.username.trim()
+  }
+  
+  // 4. POKUŠAJ: full_name (ako postoji i nije prazan)
+  if (user.full_name && user.full_name.trim()) {
+    const firstName = user.full_name.split(' ')[0]
+    if (firstName && firstName.trim()) {
+      console.log('✅ Using first part of full_name:', firstName, 'Debug:', debugInfo)
+      return firstName.trim()
+    }
+  }
+  
+  // 5. FALLBACK: email (uvijek generira nešto iz emaila)
+  if (user.email) {
+    const nameFromEmail = user.email.split('@')[0]
+    const cleanName = nameFromEmail
+      .replace(/[0-9._-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const displayName = cleanName.split(' ')[0] || nameFromEmail
+    const capitalized = displayName.charAt(0).toUpperCase() + displayName.slice(1)
+    
+    console.log('✅ Generated from email:', capitalized, 'Debug:', debugInfo)
+    return capitalized
+  }
+  
+  // 6. ULTIMATIVNI FALLBACK
+  console.log('⚠️ No valid name found, using default. Debug:', debugInfo)
+  return 'Korisnik'
+}
+
+// Helper funkcija za dobivanje inicijala (samo prvo slovo imena)
+const getUserInitial = (user) => {
   if (!user) return '?'
-  const first = user.firstName?.charAt(0) || ''
-  const last = user.lastName?.charAt(0) || ''
-  return (first + last).toUpperCase() || user.username?.charAt(0)?.toUpperCase() || 'U'
+  
+  const displayName = getUserDisplayName(user)
+  
+  // Uzmi prvo slovo prikaznog imena
+  const initial = displayName.charAt(0).toUpperCase()
+  console.log('🔤 User initial for', displayName + ':', initial)
+  
+  return initial
+}
+
+// Helper funkcija za formatiranje role
+const formatUserRole = (role) => {
+  if (!role) {
+    console.log('👑 No role provided')
+    return 'korisnik'
+  }
+  
+  const roleMap = {
+    'admin': 'administrator',
+    'user': 'korisnik',
+    'manager': 'menadžer'
+  }
+  
+  const formattedRole = roleMap[role] || role
+  console.log('👑 Role formatted:', role, '→', formattedRole)
+  
+  return formattedRole
+}
+
+// Debug info za development
+if (import.meta.env.DEV) {
+  console.log('🔧 AppHeader.vue loaded in development mode')
+  
+  // Prikaži trenutnog korisnika pri učitavanju
+  setTimeout(() => {
+    const user = displayUser.value
+    if (user) {
+      console.log('👤 AppHeader initial user state:', {
+        display_name: user.display_name,
+        first_name: user.first_name,
+        email: user.email,
+        role: user.role,
+        displayName: getUserDisplayName(user),
+        initial: getUserInitial(user)
+      })
+    } else {
+      console.log('👤 AppHeader: No user on initial load')
+    }
+  }, 100)
 }
 </script>
 
@@ -86,5 +230,26 @@ nav {
 button:hover {
   transform: translateY(-1px);
   transition: transform 0.2s ease;
+}
+
+/* Animacija za status indikator */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s infinite;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .hidden-sm-inline {
+    display: none;
+  }
 }
 </style>

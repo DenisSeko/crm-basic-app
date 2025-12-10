@@ -38,7 +38,8 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['success', 'go-home'])
+// 🎯 EMITS
+const emit = defineEmits(['auth-success', 'password-change-required'])
 
 // State
 const currentView = ref(props.initialView)
@@ -47,17 +48,14 @@ const loginRef = ref(null)
 const registerRef = ref(null)
 
 console.log('🚀 AuthManager mounted sa initialView:', props.initialView)
-console.log('📍 Trenutna ruta:', route.path)
 
 // Methods
 const switchToLogin = () => {
-  console.log('🔄 Prebacujem na login...')
   currentView.value = 'login'
   router.push('/login')
 }
 
 const switchToRegister = () => {
-  console.log('🔄 Prebacujem na register...')
   currentView.value = 'register'
   router.push('/register')
 }
@@ -66,58 +64,71 @@ const goToHome = () => {
   router.push('/')
 }
 
+// 🎯 KLJUČNA METODA: HANDLE LOGIN - SAMO PROSLJEĐIVANJE
 const handleLogin = async (loginData) => {
-  isLoading.value = true
+  console.log('🔄 AuthManager: Primljeni login podaci:', {
+    success: loginData.success,
+    hasToken: !!loginData.token,
+    hasUser: !!loginData.user,
+    requires_password_change: loginData.requires_password_change,
+    from_error: loginData.from_error
+  })
   
-  try {
-    console.log('🔄 AuthManager: Primljeni login podaci:', loginData)
+  // SAMO proslijedi podatke dalje - NE pozivaj API ponovno!
+  
+  // 🎯 PROVIERA 1: Da li je password change required?
+  if (loginData.requires_password_change === true) {
+    console.log('🔄 AuthManager: Password change required detected')
     
-    // Dodaj loading delay za bolji UX
-    await new Promise(resolve => setTimeout(resolve, 800))
+    // Emit-uj poseban event za password change
+    emit('password-change-required', {
+      token: loginData.token,
+      user: loginData.user,
+      message: 'Morate promijeniti lozinku pri prvoj prijavi'
+    })
     
-    console.log('✅ AuthManager: Prosljeđujem podatke parent komponenti')
+    return
+  }
+  
+  // 🎯 PROVIERA 2: Normalan login
+  if (loginData.success && loginData.token && loginData.user) {
+    console.log('✅ AuthManager: Normal login, emitting auth-success')
     
-    // PROMJENA: Koristimo event umjesto emit za App.vue
-    window.dispatchEvent(new CustomEvent('auth-success', { 
-      detail: loginData 
-    }))
+    // Dodaj mali delay za bolji UX
+    await new Promise(resolve => setTimeout(resolve, 300))
     
-    // Također možemo emitati i na parent ako je potrebno
-    emit('success', loginData)
+    // Emit-uj auth-success parent komponenti (App.vue)
+    emit('auth-success', {
+      token: loginData.token,
+      user: loginData.user,
+      requires_password_change: false,
+      requires_redirect: true
+    })
     
-  } catch (error) {
-    console.error('❌ AuthManager: Greška pri prijavi:', error)
-    
-    // Proslijedi grešku LoginForm komponenti
-    if (loginRef.value && loginRef.value.showError) {
-      loginRef.value.showError(
-        error.message || 'Došlo je do greške pri prijavi. Pokušajte ponovno.'
-      )
-    } else {
-      console.error('❌ LoginRef nije dostupan za prikaz greške')
-    }
-    
-  } finally {
-    isLoading.value = false
+    return
+  }
+  
+  // 🎯 PROVIERA 3: Greška ili nepotpuni podaci
+  console.error('❌ AuthManager: Neispravni login podaci:', loginData)
+  
+  // Ako imamo loginRef, pokaži grešku
+  if (loginRef.value && loginRef.value.showError) {
+    loginRef.value.showError('Došlo je do greške pri prijavi. Pokušajte ponovno.')
   }
 }
 
 const handleRegistered = async (userData) => {
   console.log('✅ AuthManager: User registered:', userData)
   
-  // PROMJENA: Također koristimo event za registraciju ako je potrebno
+  // Ako imamo token i user iz registracije
   if (userData.token && userData.user) {
     console.log('🔄 AuthManager: Emitting auth-success za registraciju')
-    window.dispatchEvent(new CustomEvent('auth-success', { 
-      detail: userData 
-    }))
+    emit('auth-success', userData)
   }
   
-  // NE prebacuj na login! Ostani na registraciji dok se ne preusmjeri na verify-email
-  // Registration komponenta će se sama preusmjeriti na verify-email
-  console.log('🔄 AuthManager: Ostajem na register viewu dok se ne preusmjeri na verify-email')
+  // NE prebacuj na login! Ostani na registraciji
+  console.log('🔄 AuthManager: Ostajem na register viewu')
   
-  // Možemo dodati loading state ako je potrebno
   isLoading.value = true
   setTimeout(() => {
     isLoading.value = false
@@ -144,6 +155,26 @@ const forceViewBasedOnRoute = () => {
     console.log('ℹ️  Unknown route, using prop value:', props.initialView)
     currentView.value = props.initialView
   }
+}
+
+// 🎯 METODA ZA SIMULACIJU PASSWORD CHANGE REQUIREMENT (za debugging)
+const simulatePasswordChange = () => {
+  const mockUser = {
+    email: 'demo@crm.demo',
+    first_name: 'Demo',
+    role: 'user',
+    requires_password_change: true
+  }
+  
+  const mockToken = 'mock-token-for-password-change'
+  
+  console.log('🔄 AuthManager: Simulating password change requirement')
+  
+  emit('password-change-required', {
+    token: mockToken,
+    user: mockUser,
+    message: 'Simulirana potreba za promjenom lozinke'
+  })
 }
 
 // Watchers
@@ -173,18 +204,13 @@ onMounted(() => {
     console.log('🔍 Post-mount check:')
     console.log('   - Final route:', route.path)
     console.log('   - Final view:', currentView.value)
-    console.log('   - View matches route:', 
-      (route.path === '/register' && currentView.value === 'register') ||
-      (route.path === '/login' && currentView.value === 'login')
-    )
   }, 100)
-})
-
-// Cleanup event listener
-import { onUnmounted } from 'vue'
-onUnmounted(() => {
-  // Očistimo event listener ako je potrebno
-  window.removeEventListener('auth-success', () => {})
+  
+  // 🎯 DODAJ GLOBALNU DEBUG FUNKCIJU
+  if (import.meta.env.DEV) {
+    window.simulatePasswordChangeFromAuthManager = simulatePasswordChange
+    console.log('🔧 Dev mode: simulatePasswordChangeFromAuthManager() available')
+  }
 })
 
 // Expose methods ako su potrebne
@@ -195,7 +221,9 @@ defineExpose({
     if (['login', 'register'].includes(view)) {
       currentView.value = view
     }
-  }
+  },
+  // 🎯 EKSPONIRAJ METODU ZA TESTIRANJE
+  simulatePasswordChange
 })
 </script>
 

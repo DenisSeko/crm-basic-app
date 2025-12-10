@@ -5,7 +5,17 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "db:init": "node database/init.js"
+    "db:init": "node database/init.js",
+    "test": "node tests/test_hybrid.js",
+    "test:quick": "node tests/test_quick.js",
+    "test:user": "node tests/test_user.js",
+    "test:coverage": "node tests/test_coverage.js",
+    "test:security": "node tests/test_security.js",
+    "test:performance": "node tests/test_performance.js",
+    "test:all": "npm run db:init && npm run test:quick && npm run test && npm run test:coverage && npm run test:security && npm run test:performance",
+    "health": "node -e \"import fetch from 'node-fetch'; fetch('http://localhost:8888/api/health').then(r => r.json()).then(d => console.log(JSON.stringify(d, null, 2))).catch(e => console.error('Error:', e));\"",
+    "lint": "npx eslint .",
+    "format": "npx prettier --write ."
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -20,5 +30,14 @@
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^7.0.10",
     "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@faker-js/faker": "^9.6.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.5"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   }
 }

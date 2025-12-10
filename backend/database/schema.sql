@@ -1,9 +1,11 @@
--- database/schema.sql - AŽURIRANA ZA EMAIL-ONLY AUTH BEZ DUPLICIRANJA
+-- database/schema.sql - AŽURIRANA ZA HYBRID 3-LEVEL SYSTEM
 
 -- Kreiranje baze podataka
 DROP DATABASE IF EXISTS crm_demo;
 CREATE DATABASE crm_demo;
 \c crm_demo;
+
+-- ============ HYBRID 3-LEVEL TABLICE ============
 
 -- Tablica korisnika za autentikaciju (AŽURIRANA ZA EMAIL-ONLY AUTH)
 CREATE TABLE users (
@@ -33,6 +35,10 @@ CREATE TABLE users (
     verification_token VARCHAR(255),
     verified_at TIMESTAMP,
     
+    -- 🔴 NOVO: Password change tracking za security flow
+    requires_password_change BOOLEAN DEFAULT FALSE,
+    password_changed_at TIMESTAMP,
+    
     -- Permissions (NOVO - za admin kontrolu)
     can_export BOOLEAN DEFAULT FALSE,
     can_manage_clients BOOLEAN DEFAULT TRUE,
@@ -49,6 +55,47 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- TIMOVI (HYBRID 3-LEVEL) - NOVA TABLICA
+CREATE TABLE teams (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    description TEXT,
+    manager_id INTEGER REFERENCES users(id),
+    created_by INTEGER REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ČLANOVI TIMA (HYBRID 3-LEVEL) - NOVA TABLICA
+CREATE TABLE team_members (
+    id SERIAL PRIMARY KEY,
+    team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(50) DEFAULT 'member',
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    added_by INTEGER REFERENCES users(id),
+    UNIQUE(team_id, user_id)
+);
+
+-- Tablica klijenata - AŽURIRANA ZA HYBRID 3-LEVEL
+CREATE TABLE clients (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    company VARCHAR(100),
+    phone VARCHAR(20),
+    address TEXT,
+    
+    -- HYBRID 3-LEVEL POLJA
+    is_global BOOLEAN DEFAULT FALSE,
+    team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============ OSTALE TABLICE ============
 
 -- NOVA TABLICA: Verification Tokens (bolja organizacija)
 CREATE TABLE verification_tokens (
@@ -100,20 +147,7 @@ CREATE TABLE user_roles (
     UNIQUE(user_id, role_id)
 );
 
--- Tablica klijenata
-CREATE TABLE clients (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
-    company VARCHAR(100),
-    phone VARCHAR(20),
-    address TEXT,
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Veza korisnika i klijenata
+-- Veza korisnika i klijenata (za backward compatibility)
 CREATE TABLE user_clients (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -128,7 +162,9 @@ CREATE TABLE user_clients (
 CREATE TABLE notes (
     id SERIAL PRIMARY KEY,
     client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
+    note_type VARCHAR(50) DEFAULT 'general',
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -167,29 +203,36 @@ CREATE TABLE user_login_history (
     failure_reason TEXT
 );
 
--- KREIRANJE INDEKSA - AŽURIRANO
+-- ============ KREIRANJE INDEKSA ============
 
--- Osnovni indeksi
-CREATE INDEX idx_clients_email ON clients(email);
-CREATE INDEX idx_notes_client_id ON notes(client_id);
-CREATE INDEX idx_notes_created_at ON notes(created_at);
-CREATE INDEX idx_activities_client_id ON activities(client_id);
-CREATE INDEX idx_activities_date ON activities(activity_date);
+-- Users indeksi
 CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_verification_token ON users(verification_token);
-CREATE INDEX idx_users_email_verified ON users(email_verified);
-
--- NOVI INDEKSI ZA EMAIL-ONLY AUTH
 CREATE INDEX idx_users_auth_method ON users(auth_method);
 CREATE INDEX idx_users_status ON users(status);
-CREATE INDEX idx_verification_tokens_token ON verification_tokens(token);
-CREATE INDEX idx_verification_tokens_user_id ON verification_tokens(user_id);
-CREATE INDEX idx_verification_tokens_expires_at ON verification_tokens(expires_at);
-
--- Ostali indeksi
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_users_department ON users(department);
 CREATE INDEX idx_users_created_by ON users(created_by);
+CREATE INDEX idx_users_verification_token ON users(verification_token);
+CREATE INDEX idx_users_email_verified ON users(email_verified);
+-- 🔴 NOVO: Indeksi za password change funkcionalnost
+CREATE INDEX idx_users_requires_password_change ON users(requires_password_change);
+CREATE INDEX idx_users_password_changed_at ON users(password_changed_at);
+
+-- HYBRID 3-LEVEL indeksi
+CREATE INDEX idx_teams_name ON teams(name);
+CREATE INDEX idx_team_members_user_id ON team_members(user_id);
+CREATE INDEX idx_team_members_team_id ON team_members(team_id);
+CREATE INDEX idx_clients_is_global ON clients(is_global);
+CREATE INDEX idx_clients_team_id ON clients(team_id);
+CREATE INDEX idx_clients_created_by ON clients(created_by);
+
+-- Clients indeksi
+CREATE INDEX idx_clients_email ON clients(email);
+
+-- Other indeksi
+CREATE INDEX idx_verification_tokens_token ON verification_tokens(token);
+CREATE INDEX idx_verification_tokens_user_id ON verification_tokens(user_id);
+CREATE INDEX idx_verification_tokens_expires_at ON verification_tokens(expires_at);
 CREATE INDEX idx_user_roles_user_id ON user_roles(user_id);
 CREATE INDEX idx_user_roles_role_id ON user_roles(role_id);
 CREATE INDEX idx_user_clients_user_id ON user_clients(user_id);
@@ -198,8 +241,13 @@ CREATE INDEX idx_user_activity_user_id ON user_activity_log(user_id);
 CREATE INDEX idx_user_activity_created_at ON user_activity_log(created_at);
 CREATE INDEX idx_user_login_user_id ON user_login_history(user_id);
 CREATE INDEX idx_user_login_login_at ON user_login_history(login_at);
+CREATE INDEX idx_notes_client_id ON notes(client_id);
+CREATE INDEX idx_notes_created_at ON notes(created_at);
+CREATE INDEX idx_activities_client_id ON activities(client_id);
+CREATE INDEX idx_activities_date ON activities(activity_date);
 
--- DODAJ CONSTRAINT-E ZA VALIDACIJU
+-- ============ CONSTRAINTS ============
+
 ALTER TABLE users 
 ADD CONSTRAINT chk_users_status 
 CHECK (status IN ('pending_verification', 'active', 'inactive', 'suspended'));
@@ -212,328 +260,259 @@ ALTER TABLE users
 ADD CONSTRAINT chk_users_role 
 CHECK (role IN ('admin', 'manager', 'user'));
 
--- INSERT DEMO PODACI SAMO AKO NE POSTOJE - AŽURIRANO ZA EMAIL-ONLY AUTH
+-- ============ HYBRID 3-LEVEL DEMO PODACI ============
 
--- Ubacivanje demo korisnika samo ako ne postoje
-INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, phone_mobile, company, department, role, auth_method, status, email_verified, can_export, can_manage_clients, can_view_reports, created_by) 
-SELECT 
-    'admin', 'admin@crm.com', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin', 'Korisnik', 'Admin Korisnik', '+385 99 123 4567', 'CRM Solutions', 'IT', 'admin', 'email_password', 'active', TRUE, TRUE, TRUE, TRUE, 1
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'admin@crm.com');
+-- Ubacivanje demo korisnika
+INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, phone_mobile, company, department, role, auth_method, status, email_verified, requires_password_change, password_changed_at, can_export, can_manage_clients, can_view_reports, created_by) VALUES
+('admin', 'admin@crm.com', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin', 'Korisnik', 'Admin Korisnik', '+385 99 123 4567', 'CRM Solutions', 'IT', 'admin', 'email_password', 'active', TRUE, FALSE, CURRENT_TIMESTAMP, TRUE, TRUE, TRUE, NULL),
+('ivan.horvat', 'ivan.horvat@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ivan', 'Horvat', 'Ivan Horvat', '+385 91 234 5678', 'Tech Company', 'Sales', 'user', 'email_password', 'active', TRUE, FALSE, CURRENT_TIMESTAMP, FALSE, TRUE, TRUE, 1),
+('ana.kovac', 'ana.kovac@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ana', 'Kovač', 'Ana Kovač', '+385 95 345 6789', 'Digital Agency', 'Marketing', 'manager', 'email_password', 'active', TRUE, FALSE, CURRENT_TIMESTAMP, TRUE, TRUE, TRUE, 1),
+('marko.petrov', 'marko.petrov@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Marko', 'Petrov', 'Marko Petrov', '+385 98 456 7890', 'Web Studio', 'Development', 'user', 'email_password', 'active', TRUE, FALSE, CURRENT_TIMESTAMP, FALSE, TRUE, TRUE, 1),
+-- 🔴 DEMO ZA PASSWORD CHANGE FLOW: Novi korisnici koji trebaju promijeniti lozinku
+('maja.juric', 'maja.juric@primjer.hr', NULL, 'Maja', 'Jurić', 'Maja Jurić', '+385 97 567 8901', 'Design Studio', 'Design', 'user', 'email_only', 'pending_verification', FALSE, TRUE, NULL, FALSE, TRUE, TRUE, 1),
+('petar.kovac', 'petar.kovac@primjer.hr', NULL, 'Petar', 'Kovač', 'Petar Kovač', '+385 99 678 9012', 'Cloud Services', 'IT', 'user', 'email_only', 'pending_verification', FALSE, TRUE, NULL, FALSE, TRUE, TRUE, 1),
+('demo.emailonly', 'demo.emailonly@primjer.hr', NULL, 'Demo', 'EmailOnly', 'Demo EmailOnly', '+385 95 111 2222', 'Test Company', 'Sales', 'user', 'email_only', 'pending_verification', FALSE, TRUE, NULL, FALSE, TRUE, TRUE, 1),
+('test.manager', 'test.manager@primjer.hr', NULL, 'Test', 'Manager', 'Test Manager', '+385 95 333 4444', 'Management Inc', 'Management', 'manager', 'email_only', 'pending_verification', FALSE, TRUE, NULL, TRUE, TRUE, TRUE, 1);
 
-INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, phone_mobile, company, department, role, auth_method, status, email_verified, can_export, can_manage_clients, can_view_reports, created_by) 
-SELECT 
-    'ivan.horvat', 'ivan.horvat@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ivan', 'Horvat', 'Ivan Horvat', '+385 91 234 5678', 'Tech Company', 'Sales', 'user', 'email_password', 'active', TRUE, FALSE, TRUE, TRUE, 1
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'ivan.horvat@primjer.hr');
+-- Ubacivanje HYBRID 3-LEVEL timova
+INSERT INTO teams (name, description, manager_id, created_by) VALUES
+('Sales Team', 'Prodaja i razvoj poslovanja', 2, 1),
+('Marketing Team', 'Marketing i promocije', 3, 1),
+('Development Team', 'Razvoj softvera', 4, 1);
 
-INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, phone_mobile, company, department, role, auth_method, status, email_verified, can_export, can_manage_clients, can_view_reports, created_by) 
-SELECT 
-    'ana.kovac', 'ana.kovac@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Ana', 'Kovač', 'Ana Kovač', '+385 95 345 6789', 'Digital Agency', 'Marketing', 'manager', 'email_password', 'active', TRUE, TRUE, TRUE, TRUE, 1
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'ana.kovac@primjer.hr');
+-- Dodjela korisnika timovima
+INSERT INTO team_members (team_id, user_id, role, added_by) VALUES
+(1, 2, 'leader', 1),  -- Ivan Horvat u Sales Team
+(1, 7, 'member', 1),  -- Demo EmailOnly u Sales Team
+(2, 3, 'leader', 1),  -- Ana Kovač u Marketing Team
+(3, 4, 'leader', 1),  -- Marko Petrov u Development Team
+(3, 6, 'member', 1);  -- Petar Kovač u Development Team
 
-INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, phone_mobile, company, department, role, auth_method, status, email_verified, can_export, can_manage_clients, can_view_reports, created_by) 
-SELECT 
-    'marko.petrov', 'marko.petrov@primjer.hr', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Marko', 'Petrov', 'Marko Petrov', '+385 98 456 7890', 'Web Studio', 'Development', 'user', 'email_password', 'active', TRUE, FALSE, TRUE, TRUE, 1
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'marko.petrov@primjer.hr');
+-- Ubacivanje HYBRID 3-LEVEL klijenata
+INSERT INTO clients (name, email, company, phone, address, is_global, team_id, created_by) VALUES
+-- 🌍 Globalni klijenti (vide svi)
+('Tech Solutions d.o.o.', 'info@techsolutions.hr', 'Tech Solutions', '+385 1 2345 678', 'Ilica 123, 10000 Zagreb', TRUE, NULL, 1),
+('Software House', 'info@softwarehouse.hr', 'Software House', '+385 1 6789 012', 'Vukovarska 178, 10000 Zagreb', TRUE, NULL, 2),
+-- 👥 Timski klijenti (vide samo članovi tima)
+('Web Studio Pro', 'contact@webstudiopro.hr', 'Web Studio Pro', '+385 1 3456 789', 'Vlaška 45, 10000 Zagreb', FALSE, 1, 2),
+('Digital Agency', 'hello@digitalagency.hr', 'Digital Agency', '+385 1 4567 890', 'Trg bana Jelačića 15, 10000 Zagreb', FALSE, 3, 1),
+('Marketing Experts', 'info@marketingexperts.hr', 'Marketing Experts', '+385 1 8901 234', 'Gundulićeva 12, 10000 Zagreb', FALSE, 2, 3),
+-- 👤 Privatni klijenti (vide samo vlasnici)
+('IT Consulting', 'office@itconsulting.hr', 'IT Consulting', '+385 1 5678 901', 'Heinzelova 25, 10000 Zagreb', FALSE, NULL, 4),
+('Cloud Services', 'cloud@services.hr', 'Cloud Services', '+385 1 7890 123', 'Jadranska 45, 10000 Zagreb', FALSE, NULL, 2),
+('Data Analytics', 'analytics@data.hr', 'Data Analytics', '+385 1 9012 345', 'Savska 78, 10000 Zagreb', FALSE, NULL, 1),
+('Design Studio', 'hello@designstudio.hr', 'Design Studio', '+385 1 2345 901', 'Preradovićeva 34, 10000 Zagreb', FALSE, NULL, 3);
 
-INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, phone_mobile, company, department, role, auth_method, status, email_verified, can_export, can_manage_clients, can_view_reports, created_by) 
-SELECT 
-    'maja.juric', 'maja.juric@primjer.hr', NULL, 'Maja', 'Jurić', 'Maja Jurić', '+385 97 567 8901', 'Design Studio', 'Design', 'user', 'email_only', 'pending_verification', FALSE, FALSE, TRUE, TRUE, 1
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'maja.juric@primjer.hr');
+-- ============ OSTALI DEMO PODACI ============
 
-INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, phone_mobile, company, department, role, auth_method, status, email_verified, can_export, can_manage_clients, can_view_reports, created_by) 
-SELECT 
-    'petar.kovac', 'petar.kovac@primjer.hr', NULL, 'Petar', 'Kovač', 'Petar Kovač', '+385 99 678 9012', 'Cloud Services', 'IT', 'user', 'email_only', 'pending_verification', FALSE, FALSE, TRUE, TRUE, 1
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'petar.kovac@primjer.hr');
+-- Ubacivanje demo rola
+INSERT INTO roles (name, description, level) VALUES
+('admin', 'Administrator sustava', 100),
+('manager', 'Manager tima', 50),
+('user', 'Obični korisnik', 10);
 
-INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, phone_mobile, company, department, role, auth_method, status, email_verified, can_export, can_manage_clients, can_view_reports, created_by) 
-SELECT 
-    'demo.emailonly', 'demo.emailonly@primjer.hr', NULL, 'Demo', 'EmailOnly', 'Demo EmailOnly', '+385 95 111 2222', 'Test Company', 'Sales', 'user', 'email_only', 'pending_verification', FALSE, FALSE, TRUE, TRUE, 1
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'demo.emailonly@primjer.hr');
+-- Ubacivanje demo dozvola
+INSERT INTO permissions (code, name, description, category) VALUES
+('user.create', 'Kreiranje korisnika', 'Može kreirati nove korisnike', 'users'),
+('user.read', 'Čitanje korisnika', 'Može vidjeti podatke korisnika', 'users'),
+('user.update', 'Ažuriranje korisnika', 'Može ažurirati podatke korisnika', 'users'),
+('user.delete', 'Brisanje korisnika', 'Može brisati korisnike', 'users'),
+('client.create', 'Kreiranje klijenata', 'Može kreirati nove klijente', 'clients'),
+('client.read', 'Čitanje klijenata', 'Može vidjeti podatke klijenata', 'clients'),
+('client.update', 'Ažuriranje klijenata', 'Može ažurirati podatke klijenata', 'clients'),
+('client.delete', 'Brisanje klijenata', 'Može brisati klijente', 'clients'),
+('note.create', 'Kreiranje bilješki', 'Može kreirati nove bilješke', 'notes'),
+('note.read', 'Čitanje bilješki', 'Može vidjeti bilješke', 'notes'),
+('note.update', 'Ažuriranje bilješki', 'Može ažurirati bilješke', 'notes'),
+('note.delete', 'Brisanje bilješki', 'Može brisati bilješke', 'notes'),
+('system.settings', 'Postavke sustava', 'Može mijenjati postavke sustava', 'system'),
+('reports.view', 'Pregled izvještaja', 'Može vidjeti sve izvještaje', 'reports');
 
-INSERT INTO users (username, email, password_hash, first_name, last_name, full_name, phone_mobile, company, department, role, auth_method, status, email_verified, can_export, can_manage_clients, can_view_reports, created_by) 
-SELECT 
-    'test.manager', 'test.manager@primjer.hr', NULL, 'Test', 'Manager', 'Test Manager', '+385 95 333 4444', 'Management Inc', 'Management', 'manager', 'email_only', 'pending_verification', FALSE, TRUE, TRUE, TRUE, 1
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'test.manager@primjer.hr');
-
--- Ubacivanje demo rola samo ako ne postoje
-INSERT INTO roles (name, description, level) 
-SELECT 'admin', 'Administrator sustava', 100
-WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'admin');
-
-INSERT INTO roles (name, description, level) 
-SELECT 'manager', 'Manager tima', 50
-WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'manager');
-
-INSERT INTO roles (name, description, level) 
-SELECT 'user', 'Obični korisnik', 10
-WHERE NOT EXISTS (SELECT 1 FROM roles WHERE name = 'user');
-
--- Ubacivanje demo dozvola samo ako ne postoje
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'user.create', 'Kreiranje korisnika', 'Može kreirati nove korisnike', 'users'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'user.create');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'user.read', 'Čitanje korisnika', 'Može vidjeti podatke korisnika', 'users'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'user.read');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'user.update', 'Ažuriranje korisnika', 'Može ažurirati podatke korisnika', 'users'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'user.update');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'user.delete', 'Brisanje korisnika', 'Može brisati korisnike', 'users'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'user.delete');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'client.create', 'Kreiranje klijenata', 'Može kreirati nove klijente', 'clients'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'client.create');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'client.read', 'Čitanje klijenata', 'Može vidjeti podatke klijenata', 'clients'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'client.read');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'client.update', 'Ažuriranje klijenata', 'Može ažurirati podatke klijenata', 'clients'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'client.update');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'client.delete', 'Brisanje klijenata', 'Može brisati klijente', 'clients'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'client.delete');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'note.create', 'Kreiranje bilješki', 'Može kreirati nove bilješke', 'notes'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'note.create');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'note.read', 'Čitanje bilješki', 'Može vidjeti bilješke', 'notes'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'note.read');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'note.update', 'Ažuriranje bilješki', 'Može ažurirati bilješke', 'notes'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'note.update');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'note.delete', 'Brisanje bilješki', 'Može brisati bilješke', 'notes'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'note.delete');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'system.settings', 'Postavke sustava', 'Može mijenjati postavke sustava', 'system'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'system.settings');
-
-INSERT INTO permissions (code, name, description, category) 
-SELECT 'reports.view', 'Pregled izvještaja', 'Može vidjeti sve izvještaje', 'reports'
-WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'reports.view');
-
--- Dodjela dozvola rolama samo ako ne postoje
+-- Dodjela dozvola rolama
 INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id 
-FROM roles r, permissions p 
-WHERE r.name = 'admin'
-AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = r.id AND rp.permission_id = p.id);
+SELECT r.id, p.id FROM roles r, permissions p WHERE r.name = 'admin';
 
 INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id 
-FROM roles r, permissions p 
-WHERE r.name = 'manager' AND p.category IN ('clients', 'notes', 'reports')
-AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = r.id AND rp.permission_id = p.id);
+SELECT r.id, p.id FROM roles r, permissions p 
+WHERE r.name = 'manager' AND p.category IN ('clients', 'notes', 'reports');
 
 INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id 
-FROM roles r, permissions p 
-WHERE r.name = 'user' AND p.code IN ('client.read', 'note.read', 'note.create')
-AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = r.id AND rp.permission_id = p.id);
+SELECT r.id, p.id FROM roles r, permissions p 
+WHERE r.name = 'user' AND p.code IN ('client.read', 'note.read', 'note.create');
 
--- Dodjela rola korisnicima samo ako ne postoje
-INSERT INTO user_roles (user_id, role_id, assigned_by)
-SELECT u.id, r.id, 1
-FROM users u, roles r 
-WHERE u.username = 'admin' AND r.name = 'admin'
-AND NOT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role_id = r.id);
+-- Dodjela rola korisnicima
+INSERT INTO user_roles (user_id, role_id, assigned_by) VALUES
+(1, 1, NULL),  -- admin
+(2, 3, 1),     -- ivan.horvat
+(3, 2, 1),     -- ana.kovac
+(4, 3, 1),     -- marko.petrov
+(5, 3, 1),     -- maja.juric
+(6, 3, 1),     -- petar.kovac
+(7, 3, 1),     -- demo.emailonly
+(8, 2, 1);     -- test.manager
 
-INSERT INTO user_roles (user_id, role_id, assigned_by)
-SELECT u.id, r.id, 1
-FROM users u, roles r 
-WHERE u.username = 'ivan.horvat' AND r.name = 'user'
-AND NOT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role_id = r.id);
+-- Dodjela klijenata korisnicima (za backward compatibility)
+INSERT INTO user_clients (user_id, client_id, assigned_by, is_primary) VALUES
+(2, 1, 1, TRUE),   -- Ivan Horvat -> Tech Solutions
+(2, 3, 1, FALSE),  -- Ivan Horvat -> Web Studio Pro
+(3, 4, 1, TRUE),   -- Ana Kovač -> Digital Agency
+(4, 6, 1, TRUE),   -- Marko Petrov -> IT Consulting
+(3, 2, 1, FALSE);  -- Ana Kovač -> Software House
 
-INSERT INTO user_roles (user_id, role_id, assigned_by)
-SELECT u.id, r.id, 1
-FROM users u, roles r 
-WHERE u.username = 'ana.kovac' AND r.name = 'manager'
-AND NOT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role_id = r.id);
+-- Ubacivanje demo bilješki (sada sa title poljem)
+INSERT INTO notes (client_id, title, content, created_by) VALUES
+(1, 'Sastanak o nadogradnji', 'Klijent zainteresiran za nadogradnju web stranice. Dogovoren sastanak sljedeći tjedan.', 1),
+(1, 'Ponuda za redesign', 'Poslana ponuda za redesign web stranice. Čekamo povratnu informaciju.', 2),
+(4, 'Marketing strategija', 'Razgovor o novoj marketing strategiji za Q4.', 3),
+(6, 'IT konsultacije', 'Savjetovanje o migraciji na cloud.', 4);
 
-INSERT INTO user_roles (user_id, role_id, assigned_by)
-SELECT u.id, r.id, 1
-FROM users u, roles r 
-WHERE u.username = 'marko.petrov' AND r.name = 'user'
-AND NOT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role_id = r.id);
+-- Dnevnik aktivnosti
+INSERT INTO user_activity_log (user_id, activity_type, description, ip_address, user_agent) VALUES
+(1, 'user.created', 'Kreiran novi korisnik: ivan.horvat', '192.168.1.100', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'),
+(2, 'client.updated', 'Ažuriran klijent: Tech Solutions d.o.o.', '192.168.1.101', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'),
+(3, 'note.created', 'Dodana nova bilješka za klijenta: Digital Agency', '192.168.1.102', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'),
+(4, 'password.changed', 'Promijenjena lozinka za korisnika', '192.168.1.103', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
 
-INSERT INTO user_roles (user_id, role_id, assigned_by)
-SELECT u.id, r.id, 1
-FROM users u, roles r 
-WHERE u.username = 'maja.juric' AND r.name = 'user'
-AND NOT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role_id = r.id);
+-- Povijest prijava
+INSERT INTO user_login_history (user_id, ip_address, user_agent, success) VALUES
+(1, '192.168.1.100', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', TRUE),
+(2, '192.168.1.101', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', TRUE),
+(3, '192.168.1.102', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36', TRUE),
+(4, '192.168.1.103', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', TRUE);
 
-INSERT INTO user_roles (user_id, role_id, assigned_by)
-SELECT u.id, r.id, 1
-FROM users u, roles r 
-WHERE u.username = 'petar.kovac' AND r.name = 'user'
-AND NOT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role_id = r.id);
+-- ============ VERIFIKACIJA ============
 
-INSERT INTO user_roles (user_id, role_id, assigned_by)
-SELECT u.id, r.id, 1
-FROM users u, roles r 
-WHERE u.username = 'demo.emailonly' AND r.name = 'user'
-AND NOT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role_id = r.id);
+SELECT '✅ HYBRID 3-LEVEL SISTEM USPIJEŠNO KREIRAN' as message;
+SELECT '🔐 PASSWORD CHANGE FUNCTIONALITY: ACTIVATED' as security_info;
 
-INSERT INTO user_roles (user_id, role_id, assigned_by)
-SELECT u.id, r.id, 1
-FROM users u, roles r 
-WHERE u.username = 'test.manager' AND r.name = 'manager'
-AND NOT EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id AND ur.role_id = r.id);
+SELECT '📊 HYBRID 3-LEVEL STATISTIKA:' as info;
+SELECT '👥 Korisnici:' as tip, COUNT(*) as broj FROM users
+UNION ALL SELECT '🔐 Trebaju promjenu lozinke:', COUNT(*) FROM users WHERE requires_password_change = true
+UNION ALL SELECT '👥 Timovi:', COUNT(*) FROM teams
+UNION ALL SELECT '🤝 Članovi timova:', COUNT(*) FROM team_members
+UNION ALL SELECT '🌍 Globalni klijenti:', COUNT(*) FROM clients WHERE is_global = true
+UNION ALL SELECT '👥 Timski klijenti:', COUNT(*) FROM clients WHERE team_id IS NOT NULL
+UNION ALL SELECT '👤 Privatni klijenti:', COUNT(*) FROM clients WHERE is_global = false AND team_id IS NULL;
 
--- Ubacivanje demo klijenata samo ako ne postoje
-INSERT INTO clients (name, email, company, phone, address, created_by) 
-SELECT 'Tech Solutions d.o.o.', 'info@techsolutions.hr', 'Tech Solutions', '+385 1 2345 678', 'Ilica 123, 10000 Zagreb', 1
-WHERE NOT EXISTS (SELECT 1 FROM clients WHERE email = 'info@techsolutions.hr');
-
-INSERT INTO clients (name, email, company, phone, address, created_by) 
-SELECT 'Web Studio Pro', 'contact@webstudiopro.hr', 'Web Studio Pro', '+385 1 3456 789', 'Vlaška 45, 10000 Zagreb', 2
-WHERE NOT EXISTS (SELECT 1 FROM clients WHERE email = 'contact@webstudiopro.hr');
-
-INSERT INTO clients (name, email, company, phone, address, created_by) 
-SELECT 'Digital Agency', 'hello@digitalagency.hr', 'Digital Agency', '+385 1 4567 890', 'Trg bana Jelačića 15, 10000 Zagreb', 1
-WHERE NOT EXISTS (SELECT 1 FROM clients WHERE email = 'hello@digitalagency.hr');
-
-INSERT INTO clients (name, email, company, phone, address, created_by) 
-SELECT 'IT Consulting', 'office@itconsulting.hr', 'IT Consulting', '+385 1 5678 901', 'Heinzelova 25, 10000 Zagreb', 3
-WHERE NOT EXISTS (SELECT 1 FROM clients WHERE email = 'office@itconsulting.hr');
-
-INSERT INTO clients (name, email, company, phone, address, created_by) 
-SELECT 'Software House', 'info@softwarehouse.hr', 'Software House', '+385 1 6789 012', 'Vukovarska 178, 10000 Zagreb', 2
-WHERE NOT EXISTS (SELECT 1 FROM clients WHERE email = 'info@softwarehouse.hr');
-
--- Dodjela klijenata korisnicima samo ako ne postoje
-INSERT INTO user_clients (user_id, client_id, assigned_by, is_primary)
-SELECT u.id, c.id, 1, TRUE
-FROM users u, clients c 
-WHERE u.username = 'ivan.horvat' AND c.email = 'info@techsolutions.hr'
-AND NOT EXISTS (SELECT 1 FROM user_clients uc WHERE uc.user_id = u.id AND uc.client_id = c.id);
-
-INSERT INTO user_clients (user_id, client_id, assigned_by, is_primary)
-SELECT u.id, c.id, 1, FALSE
-FROM users u, clients c 
-WHERE u.username = 'ivan.horvat' AND c.email = 'contact@webstudiopro.hr'
-AND NOT EXISTS (SELECT 1 FROM user_clients uc WHERE uc.user_id = u.id AND uc.client_id = c.id);
-
-INSERT INTO user_clients (user_id, client_id, assigned_by, is_primary)
-SELECT u.id, c.id, 1, TRUE
-FROM users u, clients c 
-WHERE u.username = 'ana.kovac' AND c.email = 'hello@digitalagency.hr'
-AND NOT EXISTS (SELECT 1 FROM user_clients uc WHERE uc.user_id = u.id AND uc.client_id = c.id);
-
-INSERT INTO user_clients (user_id, client_id, assigned_by, is_primary)
-SELECT u.id, c.id, 1, TRUE
-FROM users u, clients c 
-WHERE u.username = 'marko.petrov' AND c.email = 'office@itconsulting.hr'
-AND NOT EXISTS (SELECT 1 FROM user_clients uc WHERE uc.user_id = u.id AND uc.client_id = c.id);
-
-INSERT INTO user_clients (user_id, client_id, assigned_by, is_primary)
-SELECT u.id, c.id, 1, FALSE
-FROM users u, clients c 
-WHERE u.username = 'ana.kovac' AND c.email = 'info@softwarehouse.hr'
-AND NOT EXISTS (SELECT 1 FROM user_clients uc WHERE uc.user_id = u.id AND uc.client_id = c.id);
-
--- Ubacivanje demo bilješki samo ako ne postoje
-INSERT INTO notes (client_id, content, created_by)
-SELECT c.id, 'Klijent zainteresiran za nadogradnju web stranice. Dogovoren sastanak sljedeći tjedan.', 1
-FROM clients c WHERE c.email = 'info@techsolutions.hr'
-AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.client_id = c.id AND n.content LIKE 'Klijent zainteresiran za nadogradnju%');
-
-INSERT INTO notes (client_id, content, created_by)
-SELECT c.id, 'Poslana ponuda za redesign web stranice. Čekamo povratnu informaciju.', 2
-FROM clients c WHERE c.email = 'info@techsolutions.hr'
-AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.client_id = c.id AND n.content LIKE 'Poslana ponuda za redesign%');
-
--- Dnevnik aktivnosti samo ako je prazan
-INSERT INTO user_activity_log (user_id, activity_type, description, ip_address, user_agent)
-SELECT 1, 'user.created', 'Kreiran novi korisnik: ivan.horvat', '192.168.1.100', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-WHERE NOT EXISTS (SELECT 1 FROM user_activity_log WHERE user_id = 1 AND activity_type = 'user.created');
-
-INSERT INTO user_activity_log (user_id, activity_type, description, ip_address, user_agent)
-SELECT 2, 'client.updated', 'Ažuriran klijent: Tech Solutions d.o.o.', '192.168.1.101', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-WHERE NOT EXISTS (SELECT 1 FROM user_activity_log WHERE user_id = 2 AND activity_type = 'client.updated');
-
-INSERT INTO user_activity_log (user_id, activity_type, description, ip_address, user_agent)
-SELECT 3, 'note.created', 'Dodana nova bilješka za klijenta: Digital Agency', '192.168.1.102', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
-WHERE NOT EXISTS (SELECT 1 FROM user_activity_log WHERE user_id = 3 AND activity_type = 'note.created');
-
--- Povijest prijava samo ako je prazna
-INSERT INTO user_login_history (user_id, ip_address, user_agent, success)
-SELECT 1, '192.168.1.100', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM user_login_history WHERE user_id = 1 AND ip_address = '192.168.1.100');
-
-INSERT INTO user_login_history (user_id, ip_address, user_agent, success)
-SELECT 2, '192.168.1.101', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM user_login_history WHERE user_id = 2 AND ip_address = '192.168.1.101');
-
-INSERT INTO user_login_history (user_id, ip_address, user_agent, success)
-SELECT 3, '192.168.1.102', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM user_login_history WHERE user_id = 3 AND ip_address = '192.168.1.102');
-
--- PROVJERA PODATAKA - AŽURIRANO
-
--- Prikaz broja unosa po tablicama
-SELECT 'Users' as table_name, COUNT(*) as count FROM users
-UNION ALL SELECT 'Clients', COUNT(*) FROM clients
-UNION ALL SELECT 'Notes', COUNT(*) FROM notes
-UNION ALL SELECT 'Activities', COUNT(*) FROM activities
-UNION ALL SELECT 'Roles', COUNT(*) FROM roles
-UNION ALL SELECT 'Permissions', COUNT(*) FROM permissions
-UNION ALL SELECT 'User Roles', COUNT(*) FROM user_roles
-UNION ALL SELECT 'User Clients', COUNT(*) FROM user_clients
-UNION ALL SELECT 'User Activity Log', COUNT(*) FROM user_activity_log
-UNION ALL SELECT 'User Login History', COUNT(*) FROM user_login_history
-UNION ALL SELECT 'Verification Tokens', COUNT(*) FROM verification_tokens;
-
--- Status korisnika po auth metodi
-SELECT 
-    auth_method,
-    role,
-    status,
-    COUNT(*) as user_count,
-    SUM(CASE WHEN email_verified = TRUE THEN 1 ELSE 0 END) as verified
-FROM users 
-GROUP BY auth_method, role, status 
-ORDER BY auth_method, role, status;
-
--- Pregled dozvola po rolama
-SELECT 
-    r.name as role_name,
-    COUNT(rp.permission_id) as permission_count,
-    STRING_AGG(p.name, ', ') as permissions
-FROM roles r
-LEFT JOIN role_permissions rp ON r.id = rp.role_id
-LEFT JOIN permissions p ON rp.permission_id = p.id
-GROUP BY r.id, r.name;
-
--- Dodjela klijenata korisnicima
+SELECT '🔍 PREGLED KORISNIKA I PASSWORD STATUS:' as info;
 SELECT 
     u.username,
-    u.first_name,
-    u.last_name,
+    u.email,
     u.role,
     u.auth_method,
-    COUNT(uc.client_id) as assigned_clients,
-    STRING_AGG(c.name, ', ') as client_names
+    u.status,
+    CASE 
+        WHEN u.password_hash IS NULL THEN '❌ Nema lozinku'
+        ELSE '✅ Ima lozinku'
+    END as password_status,
+    CASE 
+        WHEN u.requires_password_change = true THEN '🔴 Potrebna promjena'
+        ELSE '🟢 Lozinka postavljena'
+    END as password_change_status,
+    COALESCE(TO_CHAR(u.password_changed_at, 'DD.MM.YYYY HH24:MI'), 'Nije postavljena') as zadnja_promjena,
+    CASE 
+        WHEN u.email_verified = true THEN '✅ Verificiran'
+        ELSE '❌ Nije verificiran'
+    END as email_status
 FROM users u
-LEFT JOIN user_clients uc ON u.id = uc.user_id
-LEFT JOIN clients c ON uc.client_id = c.id
-GROUP BY u.id, u.username, u.first_name, u.last_name, u.role, u.auth_method;
+ORDER BY 
+    CASE 
+        WHEN u.requires_password_change = true THEN 1
+        ELSE 2
+    END,
+    u.id;
 
--- Prikaz svih tablica u bazi
-SELECT table_name 
-FROM information_schema.tables 
-WHERE table_schema = 'public' 
-ORDER BY table_name;
+SELECT '🔍 DETALJAN PREGLED KLIJENATA:' as info;
+SELECT 
+    c.name,
+    c.email,
+    CASE 
+        WHEN c.is_global = true THEN '🌍 Globalni'
+        WHEN c.team_id IS NOT NULL THEN '👥 Timski'
+        ELSE '👤 Privatni'
+    END as tip_klijenta,
+    t.name as tim,
+    u.username as kreirao
+FROM clients c
+LEFT JOIN teams t ON c.team_id = t.id
+LEFT JOIN users u ON c.created_by = u.id
+ORDER BY 
+    CASE 
+        WHEN c.is_global = true THEN 1
+        WHEN c.team_id IS NOT NULL THEN 2
+        ELSE 3
+    END,
+    c.name;
+
+SELECT '👥 PREGLED TIMOVA:' as info;
+SELECT 
+    t.name as tim,
+    t.description,
+    u.username as manager,
+    COUNT(tm.user_id) as broj_clanova,
+    COUNT(c.id) as broj_klijenata
+FROM teams t
+LEFT JOIN users u ON t.manager_id = u.id
+LEFT JOIN team_members tm ON t.id = tm.team_id
+LEFT JOIN clients c ON t.id = c.team_id
+GROUP BY t.id, t.name, t.description, u.username
+ORDER BY t.name;
+
+SELECT '👤 TESTNI KORISNICI I PRISTUP:' as info;
+SELECT 
+    u.username,
+    u.email,
+    u.role,
+    CASE 
+        WHEN u.requires_password_change = true THEN '🔴 TREBA PROMJENU LOZINKE'
+        ELSE '🟢 OK'
+    END as password_status,
+    STRING_AGG(t.name, ', ') as timovi,
+    COUNT(DISTINCT c.id) as ukupno_klijenata,
+    COUNT(DISTINCT CASE WHEN c.is_global = true THEN c.id END) as globalni_klijenti,
+    COUNT(DISTINCT CASE WHEN c.team_id IS NOT NULL THEN c.id END) as timski_klijenti,
+    COUNT(DISTINCT CASE WHEN c.is_global = false AND c.team_id IS NULL THEN c.id END) as privatni_klijenti
+FROM users u
+LEFT JOIN team_members tm ON u.id = tm.user_id
+LEFT JOIN teams t ON tm.team_id = t.id
+LEFT JOIN clients c ON (
+    c.is_global = true 
+    OR c.team_id = tm.team_id 
+    OR c.created_by = u.id
+)
+WHERE u.email LIKE '%@crm.com' OR u.email LIKE '%@primjer.hr'
+GROUP BY u.id, u.username, u.email, u.role, u.requires_password_change
+ORDER BY 
+    CASE 
+        WHEN u.requires_password_change = true THEN 1
+        ELSE 2
+    END,
+    u.id;
+
+-- 🔴 DEMO SCENARIO ZA PASSWORD CHANGE FLOW
+SELECT '🔴 DEMO SCENARIO: PASSWORD CHANGE FLOW' as scenario_title;
+SELECT 
+    '1. Admin kreira novog korisnika (Maja Jurić) sa generisanom lozinkom' as step,
+    '   → requires_password_change = TRUE' as result
+UNION ALL
+SELECT 
+    '2. Korisnik dobiva aktivacijski email',
+    '   → Klikne na link /api/auth/verify/TOKEN'
+UNION ALL
+SELECT 
+    '3. Backend verificira token i vidi requires_password_change = TRUE',
+    '   → Redirect na /change-password sa parametrima'
+UNION ALL
+SELECT 
+    '4. Frontend prikazuje formu za postavljanje lozinke',
+    '   → Koristi endpoint /api/auth/force-change-password'
+UNION ALL
+SELECT 
+    '5. Nakon uspješne promjene',
+    '   → requires_password_change = FALSE, password_changed_at = NOW()'
+UNION ALL
+SELECT 
+    '6. Korisnik se sada može normalno prijaviti',
+    '   → Login uspješan, redirect na /dashboard';
+
+SELECT '✅ SISTEM SPREMAN ZA PASSWORD CHANGE SECURITY FLOW' as completion_message;

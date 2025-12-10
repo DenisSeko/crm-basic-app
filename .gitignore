@@ -4,6 +4,12 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Test results
+# Test skripte
+tests/
+test_*.js
+test_output_*.log
+
 # Environment variables
 #.env
 #.env.local

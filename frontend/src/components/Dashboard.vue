@@ -1,5 +1,6 @@
 <template>
-  <div class="max-w-6xl mx-auto p-4 sm:p-6">
+  <!-- HITNA PROVJERA: Ako je admin, NE RENDERIRAJ NIŠTA -->
+  <div v-if="!isCheckingRole && !isAdminUser" class="max-w-6xl mx-auto p-4 sm:p-6">
     <!-- Auto-Login Success Message -->
     <div v-if="showAutoLoginSuccess" class="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
       <div class="flex items-center gap-3">
@@ -252,11 +253,16 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, onMounted, nextTick, computed, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { clientAPI, notesAPI, authHelper } from '../services/api'
 
 const router = useRouter()
+const route = useRoute()
+
+// ADMIN REDIRECT STATE
+const isCheckingRole = ref(true)
+const isAdminUser = ref(false)
 
 // AUTO-LOGIN VARIJABLE
 const showAutoLoginSuccess = ref(false)
@@ -286,7 +292,31 @@ const addingNoteClientId = ref(null)
 const creatingClient = ref(false)
 const deletingClientId = ref(null)
 
-// AUTO-LOGIN FUNKCIONALNOST
+// KLJUČNA METODA: Provjera admin statusa i redirect
+const checkAdminAndRedirect = () => {
+  console.log('🔍 Dashboard: Provjeram je li korisnik admin...')
+  
+  const user = authHelper.getUser()
+  console.log('👤 Dashboard user:', user)
+  
+  if (user?.role === 'admin') {
+    console.log('🚨 DASHBOARD: Admin detected! Immediate redirect to /admin')
+    isAdminUser.value = true
+    
+    // Koristimo setTimeout da se komponenta ne mounta
+    setTimeout(() => {
+      // Hard redirect koji ne može failati
+      window.location.href = '/admin'
+    }, 0)
+    
+    return true
+  }
+  
+  isCheckingRole.value = false
+  return false
+}
+
+// AUTO-LOGIN FUNKCIONALNOST - POBOLJŠANA
 const handleAutoLogin = () => {
   try {
     // Provjeri URL parametre za auto-login
@@ -295,16 +325,23 @@ const handleAutoLogin = () => {
     const token = urlParams.get('token')
     const email = urlParams.get('email')
     const verified = urlParams.get('verified')
+    const alreadyVerified = urlParams.get('alreadyVerified')
 
     console.log('🔍 Dashboard checking auto-login parameters:', { 
-      autoLogin, token, email, verified 
+      autoLogin, token, email, verified, alreadyVerified
     })
 
     if (autoLogin === 'true' && token && email) {
       console.log('🔐 Auto-login detected in dashboard for:', email)
       
-      // Spremi token
-      localStorage.setItem('authToken', token)
+      // Spremi token i korisničke podatke
+      authHelper.setAuth(token, {
+        email: email,
+        email_verified: verified === 'true' || alreadyVerified === 'true',
+        role: 'user',
+        first_name: email.split('@')[0]
+      })
+      
       autoLoginEmail.value = email
       
       // Očisti URL parametre
@@ -326,7 +363,7 @@ const handleAutoLogin = () => {
   }
 }
 
-// COMPUTED PROPERTIES - ostaju iste
+// COMPUTED PROPERTIES
 const getClientsWithNotesCount = computed(() => {
   if (!clients.value || !Array.isArray(clients.value)) return 0
   return clients.value.filter(client => getNoteCount(client.id) > 0).length
@@ -685,14 +722,55 @@ const getNoteCountDisplay = (clientId) => {
   }
 }
 
+// Watcher za promjene u auth statusu
+watch(
+  () => authHelper.getUser(),
+  (newUser) => {
+    if (newUser?.role === 'admin') {
+      console.log('👑 Dashboard: User role changed to admin! Redirecting...')
+      window.location.href = '/admin'
+    }
+  },
+  { deep: true }
+)
+
 onMounted(() => {
   console.log('🚀 Dashboard component mounted')
+  
+  // PRVO: Provjeri je li admin - Ako je, redirect i zaustavi sve
+  if (checkAdminAndRedirect()) {
+    return // ZAUSTAVI SVE DALJNJE IZVRŠAVANJE
+  }
+  
+  // Samo ako nije admin, nastavi s učitavanjem
+  console.log('👤 Regular user - loading dashboard data...')
   
   // Prvo obradi auto-login
   handleAutoLogin()
   
   // Zatim učitaj podatke
   loadClients()
+  
+  // Periodična provjera admin statusa (za slučaj da se promijeni)
+  const adminCheckInterval = setInterval(() => {
+    if (authHelper.isAdmin()) {
+      console.log('⏰ Periodic check: Admin detected! Redirecting...')
+      clearInterval(adminCheckInterval)
+      window.location.href = '/admin'
+    }
+  }, 1000)
+  
+  // Očisti interval nakon 5 sekundi
+  setTimeout(() => {
+    clearInterval(adminCheckInterval)
+    console.log('✅ Admin check interval cleared')
+  }, 5000)
+})
+
+// Cleanup
+import { onUnmounted } from 'vue'
+onUnmounted(() => {
+  console.log('🧹 Dashboard unmounted')
 })
 </script>
 
