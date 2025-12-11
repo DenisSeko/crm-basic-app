@@ -419,7 +419,7 @@
           
           <!-- Generated Password Section -->
           <div class="generated-password-section">
-            <h4>🔐 Generisana lozinka</h4>
+            <h4>🔐 generirana lozinka</h4>
             <div class="password-display">
               <div class="password-field">
                 <input

@@ -2,23 +2,58 @@
 <template>
   <div class="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
     <div class="sm:mx-auto sm:w-full sm:max-w-md">
-      <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
-        {{ isRequiredChange ? 'Promjena lozinke je obavezna' : 'Promjena lozinke' }}
-      </h2>
-      <p v-if="isRequiredChange" class="mt-2 text-center text-sm text-red-600">
-        Za vašu sigurnost, potrebno je promijeniti lozinku pri prvom prijavljivanju
-      </p>
-      <p v-if="userEmail" class="mt-1 text-center text-sm text-gray-600">
-        Za korisnika: <span class="font-medium">{{ userEmail }}</span>
-      </p>
+      <!-- Header based on scenario -->
+      <div class="text-center">
+        <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
+          {{ isInitialSetup ? '👋 Dobrodošli!' : '🔐 Promjena lozinke' }}
+        </h2>
+        
+        <div v-if="isInitialSetup" class="mt-2">
+          <p class="text-sm text-blue-600 font-medium">
+            Postavite lozinku za svoj račun
+          </p>
+          <p v-if="fromActivation" class="text-xs text-gray-500 mt-1">
+            Nakon aktivacije računa
+          </p>
+        </div>
+        
+        <div v-else-if="isRequiredChange" class="mt-2">
+          <p class="text-sm text-red-600 font-medium">
+            Promjena lozinke je obavezna
+          </p>
+          <p class="text-xs text-gray-500 mt-1">
+            Za vašu sigurnost, potrebno je promijeniti lozinku
+          </p>
+        </div>
+        
+        <p v-if="userEmail" class="mt-1 text-sm text-gray-600">
+          Za korisnika: <span class="font-medium">{{ userEmail }}</span>
+        </p>
+      </div>
     </div>
 
     <div class="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
       <div class="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+        <!-- Initial setup notice -->
+        <div v-if="isInitialSetup" class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div class="flex">
+            <div class="flex-shrink-0">
+              <svg class="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div class="ml-3">
+              <p class="text-sm text-blue-700">
+                <strong>Važno:</strong> Ovo je vaša prva prijava. Postavite sigurnu lozinku za zaštitu računa.
+              </p>
+            </div>
+          </div>
+        </div>
+
         <form @submit.prevent="handlePasswordChange" class="space-y-6">
           
-          <!-- Trenutna lozinka (samo ako nije required change) -->
-          <div v-if="!isRequiredChange">
+          <!-- Trenutna lozinka (samo ako nije required change ili initial setup) -->
+          <div v-if="!isRequiredChange && !isInitialSetup">
             <label for="currentPassword" class="block text-sm font-medium text-gray-700">
               Trenutna lozinka
             </label>
@@ -156,8 +191,11 @@
               </div>
               <div class="ml-3">
                 <p class="text-sm font-medium text-green-800">
-                  Lozinka je uspješno promijenjena! Preusmjeravam...
+                  {{ successMessage }}
                 </p>
+                <div v-if="redirectCountdown > 0" class="mt-1 text-xs text-green-700">
+                  Preusmjeravam za {{ redirectCountdown }}s...
+                </div>
               </div>
             </div>
           </div>
@@ -166,11 +204,11 @@
           <div>
             <button
               type="submit"
-              :disabled="isLoading || (!passwordStrength.isValid && isRequiredChange) || !passwordsMatch"
+              :disabled="isLoading || !passwordsMatch || (!passwordStrength.isValid && (isRequiredChange || isInitialSetup))"
               :class="{
-                'opacity-50 cursor-not-allowed': isLoading || (!passwordStrength.isValid && isRequiredChange) || !passwordsMatch,
+                'opacity-50 cursor-not-allowed': isLoading || !passwordsMatch || (!passwordStrength.isValid && (isRequiredChange || isInitialSetup)),
                 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500': !isLoading && passwordsMatch,
-                'bg-gray-400': isLoading || (!passwordStrength.isValid && isRequiredChange) || !passwordsMatch
+                'bg-gray-400': isLoading || !passwordsMatch || (!passwordStrength.isValid && (isRequiredChange || isInitialSetup))
               }"
               class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 transition duration-150 ease-in-out"
             >
@@ -179,20 +217,29 @@
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Promjena lozinke...
+                {{ isInitialSetup ? 'Postavljam lozinku...' : 'Promjena lozinke...' }}
               </span>
               <span v-else>
-                {{ isRequiredChange ? 'Postavi novu lozinku' : 'Promijeni lozinku' }}
+                {{ isInitialSetup ? 'Postavi lozinku' : isRequiredChange ? 'Promijeni lozinku' : 'Promijeni lozinku' }}
               </span>
             </button>
           </div>
         </form>
+
+        <!-- Additional options -->
+        <div v-if="!isInitialSetup && !isRequiredChange" class="mt-6 pt-6 border-t border-gray-200">
+          <p class="text-xs text-gray-500 text-center">
+            Nakon uspješne promjene lozinke bit ćete automatski preusmjereni.
+          </p>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script>
+import { authHelper, passwordAPI } from '@/services/api'
+
 export default {
   name: 'ChangePassword',
   data() {
@@ -206,9 +253,14 @@ export default {
       isLoading: false,
       error: null,
       success: false,
+      successMessage: '',
       isRequiredChange: false,
+      isInitialSetup: false,
+      fromActivation: false,
       userEmail: '',
       redirectPath: '/dashboard',
+      redirectCountdown: 3,
+      redirectInterval: null,
       passwordStrength: {
         score: 0,
         strength: 'none',
@@ -223,38 +275,41 @@ export default {
     }
   },
   mounted() {
-    // Provjeri da li je ovo required password change
+    // Provjeri scenarij iz route query
     const routeQuery = this.$route.query;
-    this.isRequiredChange = routeQuery.required === 'true' || routeQuery.force === 'true';
     
-    // Dobavi user email iz localStorage ili route query
-    try {
-      const userData = JSON.parse(localStorage.getItem('user') || localStorage.getItem('tempUserData') || '{}');
-      this.userEmail = userData.email || routeQuery.email || '';
-    } catch (e) {
-      this.userEmail = routeQuery.email || '';
-    }
+    this.isRequiredChange = routeQuery.required === 'true';
+    this.isInitialSetup = routeQuery.initial_setup === 'true';
+    this.fromActivation = routeQuery.from_activation === 'true';
     
+    // Dobavi user email iz authHelper-a
+    const user = authHelper.getUser();
+    this.userEmail = user?.email || routeQuery.email || '';
+    
+    // Odredi redirect path
     this.redirectPath = routeQuery.redirect || 
                        localStorage.getItem('pendingRedirect') || 
-                       (this.checkIfAdmin() ? '/admin' : '/dashboard');
+                       (user?.role === 'admin' ? '/admin' : '/dashboard');
     
     console.log('🔐 ChangePassword mounted:', {
       isRequiredChange: this.isRequiredChange,
+      isInitialSetup: this.isInitialSetup,
+      fromActivation: this.fromActivation,
       userEmail: this.userEmail,
       redirectPath: this.redirectPath,
-      query: routeQuery
+      query: routeQuery,
+      user: user
     });
 
-    // Ako korisnik nije autenticiran i nije required change, redirect na login
-    if (!this.isAuthenticated() && !this.isRequiredChange) {
+    // Ako korisnik nije autenticiran i nije required change/initial setup, redirect na login
+    if (!authHelper.isAuthenticated() && !this.isRequiredChange && !this.isInitialSetup) {
       console.log('🔐 Not authenticated, redirecting to login');
       this.$router.push('/login');
       return;
     }
 
-    // Ako je required change, provjeri da li imamo token
-    if (this.isRequiredChange && !this.getAuthToken()) {
+    // Ako je required change ili initial setup, provjeri da li imamo token
+    if ((this.isRequiredChange || this.isInitialSetup) && !authHelper.getToken()) {
       console.log('🔐 No auth token for required password change');
       this.error = 'Niste autenticirani za promjenu lozinke. Pokušajte se ponovno prijaviti.';
       setTimeout(() => {
@@ -262,69 +317,15 @@ export default {
       }, 3000);
     }
   },
+  beforeUnmount() {
+    // Očisti interval
+    if (this.redirectInterval) {
+      clearInterval(this.redirectInterval);
+    }
+  },
   methods: {
-    isAuthenticated() {
-      return localStorage.getItem('authToken') || localStorage.getItem('isAuthenticated') === 'true';
-    },
-    
-    getAuthToken() {
-      return localStorage.getItem('authToken');
-    },
-    
-    checkIfAdmin() {
-      try {
-        const user = JSON.parse(localStorage.getItem('user') || '{}');
-        return user.role === 'admin';
-      } catch (e) {
-        return false;
-      }
-    },
-    
     checkPasswordStrength() {
-      const password = this.newPassword;
-      let score = 0;
-      let message = '';
-      let strength = 'slaba';
-      let isValid = false;
-      
-      // Minimalna dužina
-      if (password.length >= 8) score += 1;
-      
-      // Sadrži brojeve
-      if (/\d/.test(password)) score += 1;
-      
-      // Sadrži mala slova
-      if (/[a-z]/.test(password)) score += 1;
-      
-      // Sadrži velika slova
-      if (/[A-Z]/.test(password)) score += 1;
-      
-      // Sadrži specijalne znakove
-      if (/[^A-Za-z0-9]/.test(password)) score += 1;
-      
-      // Minimalna jačina
-      if (password.length >= 12) score += 1;
-      
-      // Odredi jaku lozinku
-      isValid = score >= 4 && password.length >= 8;
-      
-      if (score <= 2) {
-        strength = 'slaba';
-        message = 'Lozinka je preslaba. Dodajte brojeve, velika i mala slova.';
-      } else if (score >= 3 && score <= 4) {
-        strength = 'srednja';
-        message = 'Lozinka je dobra, ali može biti jača.';
-      } else {
-        strength = 'jaka';
-        message = 'Lozinka je izvrsna!';
-      }
-      
-      this.passwordStrength = {
-        score,
-        strength,
-        message,
-        isValid
-      };
+      this.passwordStrength = passwordAPI.checkPasswordStrength(this.newPassword);
     },
     
     async handlePasswordChange() {
@@ -339,94 +340,112 @@ export default {
         return;
       }
       
-      // Provjeri jačinu lozinke
-      if (!this.passwordStrength.isValid) {
+      // Provjeri jačinu lozinke za required change i initial setup
+      if ((this.isRequiredChange || this.isInitialSetup) && !this.passwordStrength.isValid) {
         this.error = 'Lozinka nije dovoljno jaka. ' + this.passwordStrength.message;
         return;
       }
       
       this.isLoading = true;
       this.error = null;
+      this.success = false;
       
       try {
-        let endpoint;
-        let body = {};
-        const token = this.getAuthToken();
-        
-        if (!token) {
-          throw new Error('Niste autenticirani. Pokušajte se ponovno prijaviti.');
-        }
-        
-        if (this.isRequiredChange) {
-          // Forsirana promjena lozinke (prva prijava ili admin reset)
-          console.log('🔐 Forcing password change...');
-          endpoint = 'http://localhost:8888/api/auth/force-change-password';
-          body = {
-            newPassword: this.newPassword
-          };
-        } else {
-          // Normalna promjena lozinke
-          console.log('🔐 Changing password normally...');
-          endpoint = 'http://localhost:8888/api/auth/change-password';
-          body = {
-            currentPassword: this.currentPassword,
-            newPassword: this.newPassword
-          };
-        }
-        
-        console.log('🌐 Calling endpoint:', endpoint);
-        
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify(body)
+        console.log('🔐 Starting password change process:', {
+          isRequiredChange: this.isRequiredChange,
+          isInitialSetup: this.isInitialSetup,
+          userEmail: this.userEmail
         });
         
-        const data = await response.json();
-        console.log('📡 Password change response:', data);
-        
-        if (response.ok && data.success) {
-          this.success = true;
+        if (this.isRequiredChange || this.isInitialSetup) {
+          // Forsirana promjena lozinke (prva prijava, activation, ili admin reset)
+          console.log('🔐 Using force password change API');
           
-          // Ažuriraj token i user podatke ako su vraćeni
-          if (data.token) {
-            localStorage.setItem('authToken', data.token);
+          const result = await passwordAPI.forceChangePassword(this.newPassword);
+          
+          if (result.success) {
+            this.handleSuccess('Lozinka je uspješno postavljena!', 'Sada ste prijavljeni u sustav.');
+          } else {
+            throw new Error(result.message || 'Došlo je do greške pri postavljanju lozinke');
           }
-          if (data.user) {
-            localStorage.setItem('user', JSON.stringify(data.user));
-            // Označi da je lozinka promijenjena
-            data.user.requires_password_change = false;
-          }
-          
-          // Očisti temp podatke
-          localStorage.removeItem('tempUserData');
-          localStorage.removeItem('pendingRedirect');
-          
-          // Preusmjeri nakon uspjeha
-          setTimeout(() => {
-            console.log('🔄 Redirecting to:', this.redirectPath);
-            this.$router.push(this.redirectPath);
-          }, 2000);
           
         } else {
-          this.error = data.message || data.error || 'Došlo je do greške pri promjeni lozinke';
+          // Normalna promjena lozinke
+          console.log('🔐 Using regular password change API');
+          
+          const result = await passwordAPI.changePassword(this.currentPassword, this.newPassword);
+          
+          if (result.success) {
+            this.handleSuccess('Lozinka je uspješno promijenjena!', 'Vaša lozinka je ažurirana.');
+          } else {
+            throw new Error(result.message || 'Došlo je do greške pri promjeni lozinke');
+          }
         }
+        
       } catch (error) {
         console.error('❌ Password change error:', error);
-        this.error = error.message || 'Došlo je do greške pri promjeni lozinke';
         
-        // Ako je greška vezana za autentikaciju, redirect na login
-        if (error.message.includes('autenticirani') || error.message.includes('token')) {
+        // Rukovanje specifičnim greškama
+        if (error.response?.status === 401) {
+          this.error = 'Vaša sesija je istekla. Prijavite se ponovno.';
           setTimeout(() => {
             this.$router.push('/login');
           }, 3000);
+        } else if (error.response?.status === 403 && error.response?.data?.requires_password_change) {
+          this.error = 'Morate promijeniti lozinku prije pristupa sustavu.';
+        } else {
+          this.error = error.message || 'Došlo je do greške pri promjeni lozinke';
         }
+        
       } finally {
         this.isLoading = false;
       }
+    },
+    
+    handleSuccess(primaryMessage, secondaryMessage) {
+      this.success = true;
+      this.successMessage = primaryMessage;
+      
+      // Očisti pending redirect
+      localStorage.removeItem('pendingRedirect');
+      
+      // Start redirect countdown
+      this.startRedirectCountdown();
+      
+      console.log('✅ Password change successful:', {
+        message: primaryMessage,
+        redirectPath: this.redirectPath
+      });
+    },
+    
+    startRedirectCountdown() {
+      this.redirectCountdown = 3;
+      
+      this.redirectInterval = setInterval(() => {
+        if (this.redirectCountdown > 1) {
+          this.redirectCountdown--;
+        } else {
+          clearInterval(this.redirectInterval);
+          this.performRedirect();
+        }
+      }, 1000);
+    },
+    
+    performRedirect() {
+      console.log('🔄 Performing redirect to:', this.redirectPath);
+      
+      // Force reload to update auth state across the app
+      setTimeout(() => {
+        // Koristimo replace umjesto push da se ne može vratiti na password change stranicu
+        this.$router.replace(this.redirectPath).then(() => {
+          // Force refresh ako je potrebno
+          window.location.reload();
+        }).catch(err => {
+          console.error('Redirect error:', err);
+          // Fallback
+          window.location.href = this.redirectPath;
+        });
+      }, 500);
     }
   }
 };

@@ -186,10 +186,8 @@ app.get("/api/auth/verify/:token", async (req, res) => {
 
     if (tokenCheck.rows.length === 0) {
       console.log('❌ Token not found');
-      return res.status(404).json({
-        success: false,
-        message: "Verifikacijski token nije pronađen ili je istekao"
-      });
+      // REDIRECT NA FRONTEND SA ERROROM
+      return res.redirect(`http://localhost:5173/activate?error=token_not_found`);
     }
 
     const tokenData = tokenCheck.rows[0];
@@ -197,19 +195,13 @@ app.get("/api/auth/verify/:token", async (req, res) => {
     // Provjeri da li je token već iskorišten
     if (tokenData.used === true) {
       console.log('ℹ️ Token already used');
-      return res.status(400).json({
-        success: false,
-        message: "Verifikacijski token je već iskorišten"
-      });
+      return res.redirect(`http://localhost:5173/activate?error=token_already_used&email=${encodeURIComponent(tokenData.email)}`);
     }
     
     // Provjeri da li je token istekao
     if (tokenData.expires_at < new Date()) {
       console.log('❌ Token expired');
-      return res.status(400).json({
-        success: false,
-        message: "Verifikacijski token je istekao"
-      });
+      return res.redirect(`http://localhost:5173/activate?error=token_expired&email=${encodeURIComponent(tokenData.email)}`);
     }
 
     console.log("✅ Valid token found for user:", {
@@ -254,30 +246,18 @@ app.get("/api/auth/verify/:token", async (req, res) => {
       { expiresIn: "24h" }
     );
 
-    res.json({
-      success: true,
-      message: "Email je uspješno verificiran!",
-      token: authToken,
-      user: {
-        id: tokenData.user_id,
-        email: tokenData.email,
-        first_name: tokenData.first_name,
-        last_name: tokenData.last_name,
-        full_name: tokenData.full_name,
-        role: tokenData.role,
-        email_verified: true,
-        status: 'active',
-        requires_password_change: tokenData.requires_password_change || false
-      }
-    });
+    // **KLJUČNA PROMJENA**: REDIRECT NA FRONTEND SA TOKENOM
+    const redirectUrl = `http://localhost:5173/activate?token=${authToken}&email=${encodeURIComponent(tokenData.email)}&success=true&requires_password_change=${tokenData.requires_password_change || false}`;
+    console.log('🔄 Redirecting to frontend:', redirectUrl);
+    
+    res.redirect(redirectUrl);
 
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('❌ Verify email error:', error);
-    res.status(500).json({
-      success: false,
-      message: "Došlo je do greške pri verifikaciji emaila"
-    });
+    // REDIRECT NA FRONTEND SA ERROROM
+    const errorUrl = `http://localhost:5173/activate?error=verification_failed&message=${encodeURIComponent("Došlo je do greške pri verifikaciji emaila")}`;
+    res.redirect(errorUrl);
   } finally {
     client.release();
   }
@@ -1131,7 +1111,7 @@ app.post(
         activationData = {
           email_sent: emailSent,
           activation_token: verificationToken,
-          activation_link: `http://localhost:8888/api/auth/activate/${verificationToken}`
+          activation_link: `http://localhost:8888/api/auth/verify/${verificationToken}` // PROMJENA: koristi /verify umjesto /activate
         };
       }
 
@@ -1580,7 +1560,7 @@ app.post(
         },
         activation: {
           activation_token: verificationToken,
-          activation_link: `http://localhost:8888/api/auth/activate/${verificationToken}`
+          activation_link: `http://localhost:8888/api/auth/verify/${verificationToken}` // PROMJENA: koristi /verify
         }
       });
 
@@ -2071,7 +2051,7 @@ app.listen(PORT, () => {
   console.log("   ✅ Force password change endpoint clears requires_password_change flag");
   console.log("   ✅ Backend properly tracks requires_password_change status");
   console.log("\n📋 Available endpoints:");
-  console.log("   GET    /api/auth/verify/:token (NEW - for email verification)");
+  console.log("   GET    /api/auth/verify/:token (NOW WITH REDIRECT!)");
   console.log("   GET    /api/auth/activate/:token (existing - for activation)");
   console.log("   POST   /api/auth/resend-verification (NEW)");
   console.log("   POST   /api/auth/login");
@@ -2088,21 +2068,10 @@ app.listen(PORT, () => {
   console.log("   POST   /api/admin/users/:id/resend-activation");
   console.log("   POST   /api/admin/users/:id/reset-password");
   console.log("   GET    /api/health");
-  console.log("\n👤 Role-based Middleware:");
-  console.log("   - requireRole(['admin']) → admin access only");
-  console.log("   - requireRole(['admin', 'manager']) → admin or manager");
-  console.log("\n🔐 PASSWORD SECURITY FLOW:");
-  console.log("   1. Admin creates user with generated password");
-  console.log("   2. User activates account → returns requires_password_change: true");
-  console.log("   3. Frontend sees flag → redirects to /change-password");
-  console.log("   4. User changes password → flag cleared");
-  console.log("   5. User can now access dashboard/admin");
-  console.log("\n📧 EMAIL ENDPOINTS:");
-  console.log("   - /api/auth/verify/:token - verifies email token");
-  console.log("   - /api/auth/resend-verification - resends verification email");
-  console.log("\n🆔 Username Generation:");
-  console.log("   - Automatically generates unique username from email");
-  console.log("   - Adds numbers if username already exists");
-  console.log("   - Ensures no duplicate usernames in database");
+  console.log("\n👤 REDIRECT FLOW:");
+  console.log("   1. User clicks email link → /api/auth/verify/:token");
+  console.log("   2. Backend verifies token → redirects to frontend");
+  console.log("   3. Frontend receives JWT token → redirects to password change");
+  console.log("\n🔗 Email links now use: http://localhost:8888/api/auth/verify/:token");
   console.log("=================================\n");
 });

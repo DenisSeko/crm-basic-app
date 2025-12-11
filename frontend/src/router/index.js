@@ -10,7 +10,7 @@ import HomePage from './components/HomePage.vue'
 import AuthManager from './components/AuthManager.vue'
 import Dashboard from './components/Dashboard.vue'
 import Activation from './components/Activation.vue'
-import ChangePassword from './components/ChangePassword.vue' // 🔴 NOVO: Import ChangePassword
+import ChangePassword from './components/ChangePassword.vue'
 
 // Router
 const router = createRouter({
@@ -20,7 +20,10 @@ const router = createRouter({
       path: '/',
       name: 'Home',
       component: HomePage,
-      meta: { title: 'Početna - CRM Sustav' }
+      meta: { 
+        title: 'Početna - CRM Sustav', 
+        public: true 
+      }
     },
     {
       path: '/login',
@@ -29,7 +32,8 @@ const router = createRouter({
       props: { initialView: 'login' },
       meta: { 
         requiresGuest: true,
-        title: 'Prijava - CRM Sustav'
+        title: 'Prijava - CRM Sustav',
+        public: true
       }
     },
     {
@@ -39,7 +43,8 @@ const router = createRouter({
       props: { initialView: 'register' },
       meta: { 
         requiresGuest: true,
-        title: 'Registracija - CRM Sustav'
+        title: 'Registracija - CRM Sustav',
+        public: true
       }
     },
     {
@@ -48,18 +53,17 @@ const router = createRouter({
       component: Activation,
       meta: { 
         requiresGuest: true,
-        title: 'Aktivacija Računa'
+        title: 'Aktivacija Računa',
+        public: true
       }
     },
-    // 🔴 NOVO: Change password route
     {
       path: '/change-password',
       name: 'ChangePassword',
       component: ChangePassword,
       meta: { 
-        requiresAuth: true, // Zahtjeva autentifikaciju
-        requiresPasswordChange: false, // Nije flag, rutu treba pristupiti
-        title: 'Promjena Lozinke - CRM Sustav'
+        title: 'Promjena Lozinke - CRM Sustav',
+        public: true
       }
     },
     {
@@ -68,7 +72,6 @@ const router = createRouter({
       component: Dashboard,
       meta: { 
         requiresAuth: true,
-        requiresPasswordChanged: true, // 🔴 NOVO: Treba da je lozinka promijenjena
         title: 'Dashboard - CRM Sustav'
       }
     },
@@ -79,7 +82,6 @@ const router = createRouter({
       meta: { 
         requiresAuth: true,
         requiresAdmin: true,
-        requiresPasswordChanged: true, // 🔴 NOVO: Admin također treba promijeniti lozinku
         title: 'Admin Panel - CRM Sustav'
       },
       children: [
@@ -87,46 +89,31 @@ const router = createRouter({
           path: '',
           name: 'AdminDashboard',
           component: () => import('./components/admin/AdminDashboard.vue'),
-          meta: { 
-            requiresPasswordChanged: true,
-            title: 'Admin Dashboard' 
-          }
+          meta: { title: 'Admin Dashboard' }
         },
         {
           path: 'users',
           name: 'UserManagement',
           component: () => import('./components/admin/UserManagement.vue'),
-          meta: { 
-            requiresPasswordChanged: true,
-            title: 'Upravljanje Korisnicima' 
-          }
+          meta: { title: 'Upravljanje Korisnicima' }
         },
         {
           path: 'users/create',
           name: 'CreateUser',
           component: () => import('./components/admin/CreateUserForm.vue'),
-          meta: { 
-            requiresPasswordChanged: true,
-            title: 'Dodaj Novog Korisnika' 
-          }
+          meta: { title: 'Dodaj Novog Korisnika' }
         },
         {
           path: 'users/:id/edit',
           name: 'EditUser',
           component: () => import('./components/admin/EditUserForm.vue'),
-          meta: { 
-            requiresPasswordChanged: true,
-            title: 'Uredi Korisnika' 
-          }
+          meta: { title: 'Uredi Korisnika' }
         },
         {
           path: 'settings',
           name: 'AdminSettings',
           component: () => import('./components/admin/AdminSettings.vue'),
-          meta: { 
-            requiresPasswordChanged: true,
-            title: 'Admin Postavke' 
-          }
+          meta: { title: 'Admin Postavke' }
         }
       ]
     },
@@ -137,321 +124,447 @@ const router = createRouter({
   ]
 })
 
-// 🔴 NOVO: Enhanced navigation guard sa PASSWORD CHANGE FLOW
+// 🔴 POBOLJŠANI Navigation guard - KOMBINACIJA NAJBOLJIH DIJELOVA
 router.beforeEach(async (to, from, next) => {
-  console.log('🛡️ Route guard:', {
-    to: to.name,
+  console.log('🛡️ Route guard activated:', {
+    route: to.name,
     path: to.path,
     query: to.query,
     meta: to.meta
   })
   
-  // 🎯 HANDLE PASSWORD CHANGE REDIRECT FROM VERIFY ENDPOINT
-  const hasPasswordChangeRedirect = to.query.requires_password_change === 'true' || 
-                                   to.query.initial_setup === 'true'
-  const hasToken = to.query.token
-  const hasEmail = to.query.email
+  // 📌 1. HANDLE ACTIVATION SUCCESS SCENARIO
+  // Kada korisnik klikne na aktivacijski link i backend vraća token
+  if (to.path === '/activate' && to.query.token && to.query.email) {
+    console.log('🎯 Activation scenario detected');
+    
+    try {
+      // Ako već imamo token u query-u, to znači da je activation uspješan
+      if (to.query.token && to.query.success !== 'false') {
+        console.log('🔐 Activation successful, processing token...');
+        
+        // Spremi auth podatke
+        const success = authHelper.setAuth(to.query.token, {
+          email: to.query.email,
+          email_verified: true,
+          requires_password_change: true, // Sigurno treba postaviti lozinku
+          role: 'user'
+        });
+        
+        if (success) {
+          console.log('✅ Auth data saved after activation');
+          
+          // Očisti URL parametre (važno!)
+          window.history.replaceState({}, document.title, window.location.pathname);
+          
+          // Redirect na change-password sa posebnim flow-om
+          return next({
+            path: '/change-password',
+            query: {
+              required: 'true',
+              initial_setup: 'true',
+              from_activation: 'true',
+              message: 'postavi_lozinku_nakon_aktivacije'
+            }
+          });
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error processing activation:', error);
+      // Ako nešto ne uspije, ostani na activation stranici
+    }
+  }
   
-  // 📌 SCENARIO 1: Password change redirect from verification email
-  if (hasPasswordChangeRedirect && hasToken && hasEmail) {
-    console.log('🔐 PASSWORD CHANGE REDIRECT DETEKTIRAN:', {
+  // 📌 2. AUTO-LOGIN HANDLING (iz druge skripte - poboljšano)
+  const hasAutoLogin = to.query.autoLogin === 'true';
+  const hasToken = to.query.token;
+  const hasEmail = to.query.email;
+  
+  if (hasAutoLogin && hasToken && hasEmail) {
+    console.log('🔐 Auto-login detected:', {
       email: to.query.email,
       requires_password_change: to.query.requires_password_change,
-      initial_setup: to.query.initial_setup,
-      verified: to.query.verified,
-      alreadyVerified: to.query.alreadyVerified
-    })
+      initial_setup: to.query.initial_setup
+    });
     
     try {
       // Spremi token i osnovne podatke
       authHelper.setAuth(to.query.token, {
         email: to.query.email,
-        email_verified: to.query.verified === 'true' || to.query.alreadyVerified === 'true',
-        requires_password_change: true, // 🔴 Oznaka da treba promijeniti lozinku
-        role: 'user' // privremeno
-      })
-      
-      console.log('✅ Auth podaci spremljeni, redirect na change-password...')
-      
-      // Redirect na change-password sa potrebnim parametrima
-      next({
-        path: '/change-password',
-        query: {
-          requires_password_change: 'true',
-          initial_setup: to.query.initial_setup || 'true',
-          email: to.query.email,
-          token: to.query.token
-        }
-      })
-      return
-      
-    } catch (error) {
-      console.error('❌ Password change redirect error:', error)
-      authHelper.clearAuth()
-      next('/login?error=password_change_failed')
-      return
-    }
-  }
-  
-  // 🎯 SCENARIO 2: Auto-login without password change required
-  const hasAutoLogin = to.query.autoLogin === 'true'
-  if (hasAutoLogin && hasToken && hasEmail && !hasPasswordChangeRedirect) {
-    console.log('🔐 AUTO-LOGIN DETEKTIRAN (bez password change):', {
-      email: to.query.email,
-      verified: to.query.verified,
-      tokenPreview: to.query.token ? `${to.query.token.substring(0, 20)}...` : 'no token'
-    })
-    
-    try {
-      // 1. Spremi token i osnovne podatke
-      authHelper.setAuth(to.query.token, {
-        email: to.query.email,
-        email_verified: to.query.verified === 'true' || to.query.alreadyVerified === 'true',
+        email_verified: to.query.verified === 'true',
+        requires_password_change: to.query.requires_password_change === 'true' || to.query.initial_setup === 'true',
         role: 'user'
-      })
+      });
       
-      console.log('✅ Token spremljen, verificiram...')
+      // Očisti URL parametre
+      window.history.replaceState({}, document.title, window.location.pathname);
       
-      // 2. Pokušaj verificirati sa backendom
-      try {
-        const verifyResponse = await fetch('http://localhost:8888/api/auth/verify', {
-          headers: {
-            'Authorization': `Bearer ${to.query.token}`
+      const user = authHelper.getUser();
+      
+      // Ako korisnik treba promijeniti lozinku
+      if (user?.requires_password_change === true) {
+        console.log('🔐 Auto-login: Password change required');
+        return next({
+          path: '/change-password',
+          query: {
+            required: 'true',
+            initial_setup: to.query.initial_setup || 'true'
           }
-        })
-        
-        if (verifyResponse.ok) {
-          const data = await verifyResponse.json()
-          console.log('✅ Backend verification:', {
-            role: data.user.role,
-            email: data.user.email,
-            verified: data.user.email_verified,
-            requires_password_change: data.user.requires_password_change
-          })
-          
-          // Ažuriraj user podatke
-          authHelper.setAuth(to.query.token, data.user)
-          
-          // 🔴 PROVIERI DA LI KORISNIK TREBA PROMIJENITI LOZINKU
-          if (data.user.requires_password_change === true) {
-            console.log('🔴 User requires password change, redirecting to change-password')
-            
-            // Očisti URL parametre
-            const cleanUrl = window.location.origin + window.location.pathname
-            window.history.replaceState({}, document.title, cleanUrl)
-            
-            // Redirect na change-password
-            next('/change-password')
-            return
-          }
-          
-          // Očisti URL parametre
-          const cleanUrl = window.location.origin + window.location.pathname
-          window.history.replaceState({}, document.title, cleanUrl)
-          
-          // 🎯 REDIRECT OVISNO O ROLE (ako je lozinka već promijenjena)
-          if (data.user.role === 'admin') {
-            console.log('👑 ADMIN → redirect na /admin')
-            next('/admin')
-          } else {
-            console.log('👤 USER/MANAGER → redirect na /dashboard')
-            next('/dashboard')
-          }
-        } else {
-          console.warn('⚠️ Backend verification failed, using default route')
-          const cleanUrl = window.location.origin + '/dashboard'
-          window.history.replaceState({}, document.title, cleanUrl)
-          next('/dashboard')
-        }
-      } catch (verifyError) {
-        console.error('❌ Backend verification error:', verifyError)
-        const cleanUrl = window.location.origin + '/dashboard'
-        window.history.replaceState({}, document.title, cleanUrl)
-        next('/dashboard')
+        });
       }
       
-      return
+      // Ako je lozinka već promijenjena, redirect po role
+      const redirectPath = user?.role === 'admin' ? '/admin' : '/dashboard';
+      console.log(`🔄 Auto-login redirect to: ${redirectPath}`);
+      return next(redirectPath);
       
     } catch (error) {
-      console.error('❌ Auto-login processing error:', error)
-      authHelper.clearAuth()
-      next('/login?error=auto_login_failed')
-      return
+      console.error('❌ Auto-login processing error:', error);
+      authHelper.clearAuth();
+      return next('/login?error=auto_login_failed');
     }
   }
-
-  // Standardne provjere
-  const isAuthenticated = authHelper.isAuthenticated()
-  const user = authHelper.getUser()
-  const isAdmin = user?.role === 'admin'
-  const requiresPasswordChange = user?.requires_password_change === true
   
-  console.log('🔐 Auth status:', { 
-    isAuthenticated, 
-    role: user?.role,
+  // 📌 3. STANDARD AUTH CHECKS
+  const isAuthenticated = authHelper.isAuthenticated();
+  const user = authHelper.getUser();
+  const isAdmin = user?.role === 'admin';
+  const requiresPasswordChange = user?.requires_password_change === true;
+  
+  console.log('🔐 Current auth status:', {
+    isAuthenticated,
+    userRole: user?.role,
     isAdmin,
     requiresPasswordChange,
     userEmail: user?.email
-  })
-
-  // Postavi naslov
+  });
+  
+  // Postavi naslov stranice
   if (to.meta.title) {
-    document.title = to.meta.title
+    document.title = to.meta.title;
   }
-
-  // Handle activation links (bez autoLogin flag-a)
+  
+  // 📌 4. PUBLIC ROUTES - pristup svima
+  if (to.meta.public === true) {
+    console.log('🔓 Public route access granted:', to.path);
+    
+    // Poseban slučaj za change-password
+    if (to.path === '/change-password') {
+      const queryRequired = to.query.required === 'true';
+      
+      if (queryRequired && isAuthenticated) {
+        console.log('✅ Required password change - allowing access');
+        return next();
+      }
+      
+      // Ako je public access ali korisnik je već autenticiran i ne treba mijenjati lozinku
+      if (isAuthenticated && !requiresPasswordChange) {
+        console.log('🔄 User authenticated and no password change needed, redirecting...');
+        return next(isAdmin ? '/admin' : '/dashboard');
+      }
+    }
+    
+    return next();
+  }
+  
+  // 📌 5. AUTHENTICATION REQUIRED
+  if (!isAuthenticated && to.meta.requiresAuth) {
+    console.log('🔐 Authentication required, redirecting to login');
+    
+    // Spremi trenutnu destinaciju za redirect nakon prijave
+    localStorage.setItem('loginRedirect', to.fullPath || to.path);
+    
+    return next({
+      path: '/login',
+      query: {
+        redirect: to.fullPath || to.path,
+        message: 'login_required'
+      }
+    });
+  }
+  
+  // Sada smo sigurni da je korisnik autenticiran
+  
+  // 📌 6. PASSWORD CHANGE ENFORCEMENT
+  if (requiresPasswordChange && to.path !== '/change-password') {
+    console.log('🔐 PASSWORD CHANGE REQUIRED: User needs to change password, redirecting...');
+    
+    // Spremi trenutnu destinaciju za redirect nakon promjene
+    if (to.path !== '/' && to.path !== '/login' && to.path !== '/activate') {
+      localStorage.setItem('pendingRedirect', to.fullPath || to.path);
+      console.log('📍 Saved redirect path:', to.fullPath || to.path);
+    }
+    
+    return next({
+      path: '/change-password',
+      query: {
+        required: 'true',
+        redirect: to.fullPath || to.path,
+        from_activation: to.path === '/activate' ? 'true' : undefined
+      }
+    });
+  }
+  
+  // 📌 7. Ako je na change-password stranici ali NE treba promijeniti lozinku
+  if (to.path === '/change-password' && !requiresPasswordChange) {
+    console.log('🔐 No password change required, redirecting...');
+    
+    // Provjeri redirect iz query parametra
+    const redirectQuery = to.query.redirect;
+    if (redirectQuery && redirectQuery !== '/change-password') {
+      console.log('🔄 Redirecting based on query parameter:', redirectQuery);
+      localStorage.removeItem('pendingRedirect');
+      return next(redirectQuery);
+    }
+    
+    // Inače redirect na dashboard/admin
+    const pendingRedirect = localStorage.getItem('pendingRedirect');
+    let redirectPath;
+    
+    if (pendingRedirect) {
+      redirectPath = pendingRedirect;
+      localStorage.removeItem('pendingRedirect');
+    } else {
+      redirectPath = isAdmin ? '/admin' : '/dashboard';
+    }
+    
+    console.log('🔄 Redirecting to:', redirectPath);
+    return next(redirectPath);
+  }
+  
+  // 📌 8. Ako je autenticiran i pokušava pristupiti guest stranicama
+  if (isAuthenticated && (to.path === '/login' || to.path === '/register' || to.path === '/activate')) {
+    console.log('🔐 Already authenticated, redirecting...');
+    
+    if (requiresPasswordChange) {
+      return next({
+        path: '/change-password',
+        query: { required: 'true' }
+      });
+    }
+    
+    return next(isAdmin ? '/admin' : '/dashboard');
+  }
+  
+  // 📌 9. ADMIN AUTHORIZATION
+  if (to.meta.requiresAdmin && !isAdmin) {
+    console.log('🚫 Admin access denied - redirecting to dashboard');
+    return next('/dashboard');
+  }
+  
+  // 📌 10. REDIRECT LOGIC BASED ON ROLE
+  if (isAuthenticated && isAdmin && to.path === '/dashboard') {
+    console.log('⏩ Admin accessing dashboard, redirecting to admin');
+    return next('/admin');
+  }
+  
+  if (isAuthenticated && !isAdmin && to.path.startsWith('/admin')) {
+    console.log('⛔ Non-admin accessing admin area, redirecting to dashboard');
+    return next('/dashboard');
+  }
+  
+  // 📌 11. ADMIN AREA PROTECTION (dodatna provjera)
+  if (to.path.startsWith('/admin') && to.meta.requiresAdmin) {
+    if (!isAdmin) {
+      console.log('🚫 Not an admin, redirecting to dashboard');
+      return next('/dashboard');
+    }
+    
+    console.log('✅ Admin access granted for:', to.path);
+    return next();
+  }
+  
+  // 📌 12. ACTIVATION LINKS HANDLING (bez autoLogin flag-a)
   if (to.query.token && to.query.email && !to.query.autoLogin && to.path !== '/activate') {
-    console.log('🔗 Activation link, redirecting to /activate')
-    next({
+    console.log('🔗 Activation link, redirecting to /activate');
+    return next({
       path: '/activate',
       query: to.query
-    })
-    return
+    });
   }
   
-  // 🔴 NOVO: PASSWORD CHANGE ENFORCEMENT
-  // Ako korisnik treba promijeniti lozinku, blokiraj pristup svim rutama osim /change-password
-  if (isAuthenticated && requiresPasswordChange && to.path !== '/change-password') {
-    console.log('🔴 User needs password change, redirecting to /change-password')
-    next('/change-password')
-    return
-  }
-  
-  // 🔴 NOVO: Blokiraj pristup rutama koje zahtijevaju promijenjenu lozinku
-  if (isAuthenticated && to.meta.requiresPasswordChanged && requiresPasswordChange) {
-    console.log('🚫 Access denied: Password not changed yet')
-    next('/change-password')
-    return
-  }
-  
-  // Admin provjera (samo ako je lozinka promijenjena)
-  if (to.meta.requiresAdmin && !isAdmin) {
-    console.log('🚫 Admin access denied - redirecting to dashboard')
-    next('/dashboard')
-    return
-  }
-
-  // Auth provjera
-  if (to.meta.requiresAuth && !isAuthenticated) {
-    console.log('🚫 Auth required - redirecting to login')
-    next('/login')
-    return
-  }
-  
-  // Guest provjera
-  if (to.meta.requiresGuest && isAuthenticated) {
-    console.log('🔐 Already authenticated - redirecting based on role')
-    // Ako treba promijeniti lozinku, pošalji na change-password
-    if (requiresPasswordChange) {
-      next('/change-password')
-    } else {
-      next(isAdmin ? '/admin' : '/dashboard')
-    }
-    return
-  }
-  
-  // Already logged in check za login/register/activate
-  if ((to.name === 'Login' || to.name === 'Register' || to.name === 'Activation') && isAuthenticated) {
-    console.log('🔐 Already logged in - checking password change')
-    // Ako treba promijeniti lozinku, pošalji na change-password
-    if (requiresPasswordChange) {
-      next('/change-password')
-    } else {
-      next(isAdmin ? '/admin' : '/dashboard')
-    }
-    return
-  }
-  
-  // 🔴 NOVO: Allow access to change-password even if requires_password_change = false
-  // (za regular password change)
-  if (to.path === '/change-password' && isAuthenticated && !requiresPasswordChange && !to.query.requires_password_change) {
-    console.log('🔧 Regular password change access allowed')
-    next()
-    return
-  }
-  
-  next()
-})
-
-// 🔴 NOVO: Globalna funkcija za provjeru password change statusa
-const checkPasswordChangeStatus = () => {
-  const user = authHelper.getUser()
-  if (user?.requires_password_change === true) {
-    console.log('🔴 Password change required for user:', user.email)
-    return true
-  }
-  return false
-}
+  // Sve OK, nastavi
+  console.log('✅ Route guard passed for:', to.path);
+  next();
+});
 
 // Kreiraj aplikaciju
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
 
-// Dev debug
+// 🔧 DEV DEBUG - kombinacija najboljih alata
 if (import.meta.env.DEV) {
-  // Globalne debug funkcije
-  window.clearAuth = () => {
-    authHelper.clearAuth()
-    console.log('🔐 Auth cleared')
-    window.location.reload()
-  }
+  window.router = router;
+  window.authHelper = authHelper;
   
-  window.debugRoutes = () => {
-    const routes = router.getRoutes()
-    console.log('🛣️ Available routes:', routes.map(r => ({
-      name: r.name,
-      path: r.path,
-      meta: r.meta
-    })))
-  }
+  // Debug funkcije
+  window.debugAuthState = () => {
+    const user = authHelper.getUser();
+    const authToken = localStorage.getItem('authToken');
+    const userData = localStorage.getItem('userData');
+    
+    console.log('🔍 DEBUG AUTH STATE:');
+    console.log('📦 LocalStorage authToken:', authToken ? 'PRESENT' : 'MISSING');
+    console.log('📦 LocalStorage userData:', userData);
+    console.log('👤 authHelper.getUser():', user);
+    console.log('🔐 requires_password_change:', user?.requires_password_change);
+    console.log('📍 Current URL:', window.location.href);
+    console.log('---');
+  };
   
-  window.goToRoute = (routeName) => {
-    router.push({ name: routeName })
-    console.log(`🛣️ Navigating to route: ${routeName}`)
-  }
+  window.showRoutes = () => {
+    const routes = router.getRoutes();
+    console.log('🛣️ Total routes:', routes.length);
+    routes.forEach(route => {
+      console.log(`📌 ${route.name}: ${route.path} (public: ${route.meta?.public || false})`);
+      if (route.children && route.children.length > 0) {
+        console.log('   Children:');
+        route.children.forEach(child => {
+          console.log(`   - ${child.name}: ${child.path}`);
+        });
+      }
+    });
+  };
   
   window.simulatePasswordChangeRequired = () => {
-    const user = authHelper.getUser()
+    console.log('🧪 Simulating password change required...');
+    const user = authHelper.getUser();
     if (user) {
-      user.requires_password_change = true
-      authHelper.setUser(user)
-      console.log('🔴 Simulated password change required for:', user.email)
-      window.location.reload()
+      authHelper.updateUserData({
+        requires_password_change: true
+      });
+      console.log('✅ Password change flag set to true');
+      window.location.reload();
+    } else {
+      console.log('❌ No user found, please login first');
     }
-  }
+  };
   
   window.clearPasswordChangeFlag = () => {
-    const user = authHelper.getUser()
-    if (user) {
-      user.requires_password_change = false
-      authHelper.setUser(user)
-      console.log('🟢 Cleared password change flag for:', user.email)
-      window.location.reload()
+    console.log('🧹 Clearing password change flag...');
+    authHelper.updateUserData({
+      requires_password_change: false
+    });
+    localStorage.removeItem('pendingRedirect');
+    console.log('✅ Password change flag cleared');
+    window.location.reload();
+  };
+  
+  window.testActivationFlow = async () => {
+    console.log('🧪 Testing activation flow...');
+    // Simuliraj activation success
+    const mockToken = 'mock-token-for-testing';
+    const mockEmail = 'test@example.com';
+    
+    authHelper.setAuth(mockToken, {
+      email: mockEmail,
+      email_verified: true,
+      requires_password_change: true,
+      role: 'user'
+    });
+    
+    console.log('✅ Mock activation data set');
+    
+    // Redirect na change-password
+    router.push({
+      path: '/change-password',
+      query: {
+        required: 'true',
+        initial_setup: 'true',
+        from_activation: 'true'
+      }
+    });
+  };
+  
+  // EMERGENCY FIX FUNKCIJA
+  window.fixRedirectLoopNow = () => {
+    console.log('🔧 EMERGENCY FIX: Fixing redirect loop...');
+    
+    // 1. Očisti sve redirect flagove
+    localStorage.removeItem('pendingRedirect');
+    localStorage.removeItem('loginRedirect');
+    
+    // 2. Provjeri i ispravi user data
+    const userData = localStorage.getItem('userData');
+    if (userData) {
+      try {
+        const user = JSON.parse(userData);
+        console.log('👤 Current user data:', user);
+        
+        // Ako je requires_password_change true, postavi na false
+        if (user.requires_password_change === true) {
+          user.requires_password_change = false;
+          localStorage.setItem('userData', JSON.stringify(user));
+          console.log('✅ Fixed: requires_password_change set to false');
+        }
+      } catch (e) {
+        console.error('Error parsing userData:', e);
+      }
     }
+    
+    // 3. Force refresh
+    console.log('🔄 Force refreshing page...');
+    window.location.href = '/';
+  };
+  
+  console.log('🔧 Development mode - debug commands available:');
+  console.log('  debugAuthState() - Show current auth state');
+  console.log('  showRoutes() - List all routes');
+  console.log('  simulatePasswordChangeRequired() - Test password change flow');
+  console.log('  clearPasswordChangeFlag() - Clear password change flag');
+  console.log('  testActivationFlow() - Test activation → password change flow');
+  console.log('  fixRedirectLoopNow() - EMERGENCY fix for redirect loop');
+}
+
+// 🔐 Startup initialization
+setTimeout(() => {
+  console.log('🚀 App startup initialization...');
+  
+  // Provjeri da li korisnik treba promijeniti lozinku
+  const user = authHelper.getUser();
+  const currentPath = window.location.pathname;
+  const searchParams = new URLSearchParams(window.location.search);
+  
+  console.log('🔍 Startup check:', {
+    currentPath,
+    hasUser: !!user,
+    requiresPasswordChange: user?.requires_password_change,
+    query: Object.fromEntries(searchParams.entries())
+  });
+  
+  // Očisti stare redirect flagove
+  localStorage.removeItem('loginRedirect');
+  
+  // Ako postoji pendingRedirect ali smo već na toj stranici, očisti ga
+  const pendingRedirect = localStorage.getItem('pendingRedirect');
+  if (pendingRedirect === currentPath) {
+    localStorage.removeItem('pendingRedirect');
+    console.log('🧹 Cleared pendingRedirect matching current path');
   }
   
-  window.checkPasswordChange = checkPasswordChangeStatus
-  
-  console.log('🔧 Development mode - debug available')
-  console.log('   - clearAuth() - očisti auth podatke')
-  console.log('   - debugRoutes() - prikaži dostupne rute')
-  console.log('   - goToRoute("AdminSettings") - idi na AdminSettings')
-  console.log('   - simulatePasswordChangeRequired() - simuliraj password change required')
-  console.log('   - clearPasswordChangeFlag() - očisti password change flag')
-  console.log('   - checkPasswordChange() - provjeri password change status')
-}
+  // Ako korisnik treba promijeniti lozinku, ali nije na change-password stranici
+  if (user?.requires_password_change === true && 
+      !currentPath.includes('/change-password') &&
+      !currentPath.includes('/login') &&
+      !currentPath.includes('/auth')) {
+    
+    console.log('🔄 Startup: Password change required, checking URL...');
+    
+    // Ako nema required flag u URL-u, dodaj ga
+    if (!searchParams.has('required')) {
+      console.log('🔄 Adding required flag to URL');
+      
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.set('required', 'true');
+      
+      // Ne redirectaj ovdje, router guard će to obaviti
+      // Samo logujemo da je potreban redirect
+    }
+  }
+}, 100);
 
 app.mount('#app')
 
-console.log('🚀 Vue CRM aplikacija pokrenuta!')
-console.log('🔐 Initial auth status:', authHelper.getAuthInfo())
-
-// 🔴 NOVO: Periodic check for password change requirement
-setInterval(() => {
-  const requiresChange = checkPasswordChangeStatus()
-  if (requiresChange && window.location.pathname !== '/change-password') {
-    console.log('🔄 Periodic check: Password change required, redirecting...')
-    router.push('/change-password')
-  }
-}, 30000) // Provjeri svakih 30 sekundi
+console.log('🚀 CRM App started successfully!');
+console.log('🔐 Initial auth status:', authHelper.getAuthInfo());
