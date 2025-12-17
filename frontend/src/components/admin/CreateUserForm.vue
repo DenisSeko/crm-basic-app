@@ -484,7 +484,7 @@
 <script>
 import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { adminAPI } from '@/services/api'
+import { adminAPI, authHelper } from '@/services/api' // 🔴 DODANO: import authHelper
 
 export default {
   name: 'CreateUserForm',
@@ -677,6 +677,27 @@ export default {
       try {
         loading.value = true
         console.log('🚀 Početak kreiranja korisnika...')
+        
+        // 🔴 **VAŽNO: Spremi admin podatke prije API poziva**
+        const currentUser = authHelper.getUser()
+        const isCurrentUserAdmin = currentUser?.role === 'admin'
+        let adminBackup = null
+        
+        if (isCurrentUserAdmin) {
+          adminBackup = {
+            role: currentUser.role,
+            requires_password_change: currentUser.requires_password_change,
+            email: currentUser.email,
+            first_name: currentUser.first_name,
+            last_name: currentUser.last_name,
+            display_name: currentUser.display_name,
+            id: currentUser.id
+          }
+          console.log('👑 Admin backup data saved:', adminBackup)
+          
+          // Spremi backup u localStorage za svaki slučaj
+          localStorage.setItem('admin_backup_before_user_creation', JSON.stringify(adminBackup))
+        }
 
         // Prepare data for API - NOVI FORMAT
         const userData = {
@@ -704,8 +725,8 @@ export default {
 
         console.log('📤 Šaljem podatke na backend:', userData)
         
-        // API call - koristimo novi API koji vraća generisanu lozinku
-        const response = await adminAPI.createUser(userData)
+        // 🔴 **KORISTIMO ZAŠTIĆENU METODU**
+        const response = await adminAPI.createUserProtected(userData)
 
         console.log('✅ Odgovor servera:', response)
 
@@ -718,6 +739,35 @@ export default {
           
           // Save generated password
           generatedPassword.value = response.temporary_password || ''
+          
+          // 🔴 **DODATNA ZAŠTITA: Provjeri da admin nije dobio password change flag**
+          if (isCurrentUserAdmin) {
+            const updatedUser = authHelper.getUser()
+            console.log('🔍 Provjera admin statusa nakon kreiranja korisnika:', {
+              before: adminBackup,
+              after: updatedUser
+            })
+            
+            // Ako je admin ipak dobio password change flag, odmah ga popravi
+            if (updatedUser?.requires_password_change === true) {
+              console.log('⚠️ Admin ipak dobio password change flag - fixing now')
+              authHelper.updateUserData({
+                requires_password_change: false,
+                role: 'admin'
+              })
+              
+              // Popravi i localStorage direktno
+              const authData = JSON.parse(localStorage.getItem('auth') || '{}')
+              if (authData.user) {
+                authData.user.requires_password_change = false
+                authData.user.role = 'admin'
+                localStorage.setItem('auth', JSON.stringify(authData))
+              }
+            }
+            
+            // Ukloni backup
+            localStorage.removeItem('admin_backup_before_user_creation')
+          }
           
           showSuccessModal.value = true
           console.log('✅ Korisnik uspješno kreiran sa lozinkom:', generatedPassword.value ? 'DA' : 'NE')
@@ -744,6 +794,22 @@ export default {
 
       } catch (error) {
         console.error('❌ Greška pri kreiranju korisnika:', error)
+        
+        // 🔴 **U SLUČAJU GREŠKE: Vrati admin podatke**
+        const adminBackupStr = localStorage.getItem('admin_backup_before_user_creation')
+        if (adminBackupStr) {
+          try {
+            const adminBackup = JSON.parse(adminBackupStr)
+            console.log('🔄 Restoring admin data after error:', adminBackup)
+            authHelper.updateUserData({
+              ...adminBackup,
+              requires_password_change: false
+            })
+            localStorage.removeItem('admin_backup_before_user_creation')
+          } catch (e) {
+            console.error('❌ Error restoring admin backup:', e)
+          }
+        }
         
         // Handle specific error cases
         if (error.response?.status === 400) {

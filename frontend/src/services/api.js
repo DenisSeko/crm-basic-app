@@ -1,3 +1,4 @@
+// api.js - KOMPLETNO AŽURIRANO SA FIXANIM PASSWORD CHANGE REDIRECTOM
 import axios from "axios";
 
 // API konfiguracija
@@ -415,10 +416,17 @@ const authHelper = {
 
   // Nova metoda za provjeru da li je korisnik upravo promijenio lozinku
   markPasswordChanged() {
-    return this.updateUserData({
+    const result = this.updateUserData({
       requires_password_change: false,
       password_changed_at: new Date().toISOString()
     });
+    
+    if (result) {
+      console.log("✅ Password marked as changed in authHelper");
+      this._emitAuthChange(); // Dodatno emit event
+    }
+    
+    return result;
   },
 
   // Poboljšana metoda za provjeru da li korisnik treba promijeniti lozinku
@@ -439,7 +447,15 @@ const authHelper = {
         localStorage.setItem('pendingRedirect', currentPath);
       }
       
+      // Postavi flag da je redirect u tijeku
+      localStorage.setItem('redirecting_for_password_change', 'true');
+      
       return true;
+    }
+    
+    // Očisti flag ako smo na change-password stranici
+    if (currentPath.includes('/change-password')) {
+      localStorage.removeItem('redirecting_for_password_change');
     }
     
     return false;
@@ -456,15 +472,58 @@ const authHelper = {
   setRequiresPasswordChange(value) {
     const user = this.getUser();
     if (user) {
-      this.updateUserData({
+      return this.updateUserData({
         requires_password_change: Boolean(value)
       });
     }
+    return false;
   },
 
   // Nova metoda: Dobavi auth podatke kao string za debug
   getDebugInfo() {
     return JSON.stringify(this.getAuthInfo(), null, 2);
+  },
+
+  // 🔴 NOVO: Metoda za provjeru initial setup scenarija
+  isInitialSetup() {
+    const user = this.getUser();
+    return user?.requires_password_change === true && 
+           (this.getToken() !== null) &&
+           !localStorage.getItem('password_change_completed');
+  },
+
+  // 🔴 NOVO: Metoda za označavanje da je password change završen
+  markPasswordChangeCompleted() {
+    localStorage.setItem('password_change_completed', 'true');
+    console.log("✅ Password change marked as completed");
+  },
+
+  // 🔴 NOVO: Metoda za provjeru da li je password change u tijeku
+  isPasswordChangeInProgress() {
+    return localStorage.getItem('password_change_in_progress') === 'true';
+  },
+
+  // 🔴 NOVO: Metoda za postavljanje password change in progress flag
+  setPasswordChangeInProgress(value) {
+    if (value) {
+      localStorage.setItem('password_change_in_progress', 'true');
+    } else {
+      localStorage.removeItem('password_change_in_progress');
+    }
+  },
+
+  // 🔴 NOVO: Metoda za provjeru da li je redirect za password change u tijeku
+  isPasswordChangeRedirectInProgress() {
+    return localStorage.getItem('redirecting_for_password_change') === 'true';
+  },
+
+  // 🔴 NOVO: Metoda za postavljanje redirect flag-a
+  setPasswordChangeRedirectInProgress(value) {
+    if (value) {
+      localStorage.setItem('redirecting_for_password_change', 'true');
+    } else {
+      localStorage.removeItem('redirecting_for_password_change');
+    }
   }
 };
 
@@ -488,12 +547,25 @@ api.interceptors.request.use(
   }
 );
 
-// Glavni Response interceptor
+// 🔴 **FIXAN Response interceptor - SA ISPRAVNIM PASSWORD CHANGE REDIRECTOM SA LOGIN STRANICE**
 api.interceptors.response.use(
   (response) => {
+    const currentUser = authHelper.getUser();
+    const isCurrentUserAdmin = currentUser?.role === 'admin';
+    
+    // 🔴 KRITIČNO: Ako je trenutni korisnik admin, NIKAD ne mijenjaj auth podatke automatski
+    if (isCurrentUserAdmin) {
+      // Log za debug
+      if (response.data && (response.data.requires_password_change || response.data.user?.requires_password_change)) {
+        console.log('🛡️ Interceptor: Admin detected with password change flag in response - NOT updating auth data');
+      }
+      return response;
+    }
+    
+    // Originalna logika samo za non-admin korisnike
     // Ako response sadrži podatke o promjeni lozinke, ažuriraj lokalne podatke
     if (response.data && (response.data.requires_password_change || response.data.user?.requires_password_change)) {
-      console.log("🔐 Password change flag detected in response");
+      console.log("🔐 Password change flag detected in response for non-admin user");
       
       // Ažuriraj lokalne podatke
       if (response.data.token && response.data.user) {
@@ -503,32 +575,105 @@ api.interceptors.response.use(
       }
     }
     
+    // Ako je password change uspješan, označi da je završen
+    if (response.config.url?.includes('/change-password') || response.config.url?.includes('/force-change-password')) {
+      if (response.data.success) {
+        console.log("✅ Password change successful in interceptor");
+        authHelper.markPasswordChanged();
+        authHelper.markPasswordChangeCompleted();
+        authHelper.setPasswordChangeInProgress(false);
+      }
+    }
+    
     return response;
   },
   (error) => {
     const status = error.response?.status;
     const data = error.response?.data;
     const code = data?.code;
+    const requestUrl = error.config?.url || '';
 
-    // Handlanje password change required grešaka
+    console.log('🔍 Interceptor error details:', {
+      status,
+      code,
+      url: requestUrl,
+      requires_password_change: data?.requires_password_change,
+      path: window.location.pathname,
+      isLoginPage: window.location.pathname.includes('/login')
+    });
+
+    // 🔴 ISPRAVLJENO: Handlanje password change required grešaka - REDIRECT ČAK I SA LOGIN STRANICE
     if (status === 403 && (data?.requires_password_change || code === "PASSWORD_CHANGE_REQUIRED")) {
-      console.log("🔐 Password change required detected in interceptor");
+      console.log("🔐 Password change required detected in interceptor - PROCESSING REDIRECT...");
       
-      // Ažuriraj lokalne podatke
+      const currentUser = authHelper.getUser();
+      const isCurrentUserAdmin = currentUser?.role === 'admin';
+      const currentPath = window.location.pathname;
+      
+      // 🔴 Ako je admin, NE mijenjaj podatke
+      if (isCurrentUserAdmin) {
+        console.log('🛡️ Interceptor: Admin password change required - NOT updating auth data');
+        return Promise.reject({
+          ...error,
+          handled: true,
+          message: "Morate promijeniti lozinku prije pristupa sustavu"
+        });
+      }
+      
+      // Ažuriraj lokalne podatke samo za non-admin korisnike
       if (data.token && data.user) {
+        console.log('🔐 Saving token and user data from 403 response');
         authHelper.setAuth(data.token, data.user);
       } else if (data.user) {
+        console.log('🔐 Updating user data from 403 response');
         authHelper.updateUserData(data.user);
       }
       
       // Postavi flag za password change
       authHelper.setRequiresPasswordChange(true);
+      authHelper.setPasswordChangeInProgress(true);
       
-      // Ne redirectuj ovdje, router guard će to obaviti
+      // 🔴 VAŽNO: Spremanje tokena ako postoji u error response
+      if (data.token) {
+        console.log('🔐 Token found in 403 response, saving to localStorage');
+        localStorage.setItem('authToken', data.token);
+        api.defaults.headers.common["Authorization"] = `Bearer ${data.token}`;
+      }
+      
+      // 🔴 OVO JE KLJUČNO ISPRAVLJENO: REDIRECT ČAK I SA LOGIN STRANICE NA CHANGE-PASSWORD
+      setTimeout(() => {
+        // 🔴 VAŽNA PROMJENA: Dozvoli redirect SA login stranice NA change-password
+        // Trebamo ići na change-password čak i ako smo na login stranici!
+        console.log('🔄 Interceptor: Checking if redirect is needed from', currentPath);
+        
+        // Ako NISMO na change-password stranici, redirectaj
+        if (!currentPath.includes('/change-password')) {
+          console.log('🔄 Interceptor: Redirecting from', currentPath, 'to change-password page');
+          
+          // Spremi trenutni path za povratak (osim ako je login ili root)
+          if (currentPath !== '/' && currentPath !== '/login') {
+            localStorage.setItem('pendingRedirect', currentPath);
+            console.log('📍 Saved pending redirect:', currentPath);
+          }
+          
+          // Postavi flag da je redirect u tijeku
+          authHelper.setPasswordChangeRedirectInProgress(true);
+          
+          // 🔴 OVO JE NOVO: Koristi window.location za siguran redirect
+          // Dodaj from_login parametar ako dolazimo sa login stranice
+          const fromLogin = currentPath.includes('/login') ? '&from_login=true' : '';
+          window.location.href = `/change-password?required=true${fromLogin}&initial_setup=true`;
+          
+        } else {
+          console.log('ℹ️ Already on change-password page, no redirect needed');
+        }
+      }, 300);
+      
       return Promise.reject({
         ...error,
         handled: true,
-        message: "Morate promijeniti lozinku prije pristupa sustavu"
+        message: "Morate promijeniti lozinku prije pristupa sustavu",
+        redirectTo: '/change-password?required=true'
       });
     }
 
@@ -538,7 +683,8 @@ api.interceptors.response.use(
       authHelper.clearAuth();
       
       // Samo ako nismo na login stranici, možemo redirectati
-      if (window.location.pathname !== "/login" && !window.location.pathname.includes('/change-password')) {
+      if (!window.location.pathname.includes('/login') && 
+          !window.location.pathname.includes('/change-password')) {
         setTimeout(() => {
           window.location.href = "/login?message=session_expired";
         }, 1000);
@@ -547,7 +693,7 @@ api.interceptors.response.use(
     
     // Za 404 greške samo logujemo
     else if (status === 404) {
-      console.log(`🔍 404 Not Found: ${error.config?.url}`);
+      console.log(`🔍 404 Not Found: ${requestUrl}`);
     }
 
     return Promise.reject(error);
@@ -650,7 +796,7 @@ const notesAPI = {
   },
 };
 
-// ADMIN API - PROŠIREN SA ALIAS FUNKCIJAMA
+// 🔴 **POPRAVLJEN ADMIN API - sa zaštitom za admin user management**
 const adminAPI = {
   async getUsers(params = {}) {
     try {
@@ -664,7 +810,32 @@ const adminAPI = {
 
   async getUser(userId) {
     try {
+      console.log('🔍 ADMIN API: Getting user', userId);
+      
+      const currentUser = authHelper.getUser();
+      const isAdmin = currentUser?.role === 'admin';
+      let adminBackup = null;
+      
+      if (isAdmin) {
+        adminBackup = {
+          role: currentUser.role,
+          requires_password_change: currentUser.requires_password_change,
+          email: currentUser.email,
+          display_name: currentUser.display_name
+        };
+        console.log('💾 Admin backup saved for getUser');
+      }
+      
       const response = await api.get(`/api/admin/users/${userId}`);
+      
+      // 🔴 VRATI ADMINOVE PODATKE AKO JE BIO ADMIN
+      if (isAdmin && adminBackup) {
+        setTimeout(() => {
+          console.log('🛡️ Restoring admin data after getUser');
+          authHelper.updateUserData(adminBackup);
+        }, 50);
+      }
+      
       return response.data;
     } catch (error) {
       console.error("❌ Greška pri dohvaćanju korisnika:", error);
@@ -672,19 +843,82 @@ const adminAPI = {
     }
   },
 
+  // 🔴 POPRAVLJENA: createUser sa zaštitom admin podataka
   async createUser(userData) {
     try {
+      console.log('🚀 Creating user with data:', userData);
+      
+      // 🔴 Spremi adminove originalne podatke prije API poziva
+      const currentUser = authHelper.getUser();
+      const isCurrentUserAdmin = currentUser?.role === 'admin';
+      let adminBackup = null;
+      
+      if (isCurrentUserAdmin) {
+        adminBackup = {
+          role: currentUser.role,
+          requires_password_change: currentUser.requires_password_change,
+          email: currentUser.email,
+          first_name: currentUser.first_name,
+          last_name: currentUser.last_name,
+          display_name: currentUser.display_name
+        };
+        console.log('👑 Admin backup data saved:', adminBackup);
+      }
+      
       const response = await api.post("/api/admin/users", userData);
+      console.log('✅ Create user response:', response.data);
+      
+      // 🔴 Ako je trenutni korisnik admin, vrati njegove originalne podatke
+      if (isCurrentUserAdmin && adminBackup) {
+        setTimeout(() => {
+          console.log('🛡️ Restoring original admin auth data');
+          
+          // Osiguraj da admin ostane admin i da nema password change flag
+          const restoredData = {
+            ...adminBackup,
+            requires_password_change: false // Eksplicitno postavi na false
+          };
+          
+          // Ažuriraj adminove podatke
+          authHelper.updateUserData(restoredData);
+        }, 50);
+      }
+      
       return response.data;
     } catch (error) {
-      console.error("❌ Greška pri kreiranju korisnika:", error);
+      console.error('❌ Create user error:', error);
       throw error;
     }
   },
 
   async updateUser(userId, userData) {
     try {
+      console.log('🔧 Updating user:', userId);
+      
+      const currentUser = authHelper.getUser();
+      const isCurrentUserAdmin = currentUser?.role === 'admin';
+      let adminBackup = null;
+      
+      if (isCurrentUserAdmin) {
+        adminBackup = {
+          role: currentUser.role,
+          requires_password_change: currentUser.requires_password_change,
+          email: currentUser.email,
+          display_name: currentUser.display_name
+        };
+        console.log('💾 Admin backup saved for updateUser');
+      }
+      
       const response = await api.put(`/api/admin/users/${userId}`, userData);
+      
+      // 🔴 VRATI ADMINOVE PODATKE AKO JE BIO ADMIN
+      if (isCurrentUserAdmin && adminBackup) {
+        setTimeout(() => {
+          console.log('🛡️ Restoring admin data after updateUser');
+          authHelper.updateUserData(adminBackup);
+        }, 50);
+      }
+      
       return response.data;
     } catch (error) {
       console.error("❌ Greška pri ažuriranju korisnika:", error);
@@ -694,7 +928,32 @@ const adminAPI = {
 
   async patchUser(userId, userData) {
     try {
+      console.log('🔧 Patching user:', userId);
+      
+      const currentUser = authHelper.getUser();
+      const isCurrentUserAdmin = currentUser?.role === 'admin';
+      let adminBackup = null;
+      
+      if (isCurrentUserAdmin) {
+        adminBackup = {
+          role: currentUser.role,
+          requires_password_change: currentUser.requires_password_change,
+          email: currentUser.email,
+          display_name: currentUser.display_name
+        };
+        console.log('💾 Admin backup saved for patchUser');
+      }
+      
       const response = await api.patch(`/api/admin/users/${userId}`, userData);
+      
+      // 🔴 VRATI ADMINOVE PODATKE AKO JE BIO ADMIN
+      if (isCurrentUserAdmin && adminBackup) {
+        setTimeout(() => {
+          console.log('🛡️ Restoring admin data after patchUser');
+          authHelper.updateUserData(adminBackup);
+        }, 50);
+      }
+      
       return response.data;
     } catch (error) {
       console.error("❌ Greška pri parcijalnom ažuriranju korisnika:", error);
@@ -702,9 +961,36 @@ const adminAPI = {
     }
   },
 
+  // 🔴 POPRAVLJENA: deleteUser metoda sa zaštitom admin podataka
   async deleteUser(userId) {
     try {
+      console.log(`🗑️ ADMIN API: Deleting user ${userId}`);
+      
+      const currentUser = authHelper.getUser();
+      const isCurrentUserAdmin = currentUser?.role === 'admin';
+      let adminBackup = null;
+      
+      if (isCurrentUserAdmin) {
+        adminBackup = {
+          role: currentUser.role,
+          requires_password_change: currentUser.requires_password_change,
+          email: currentUser.email,
+          display_name: currentUser.display_name
+        };
+        console.log('💾 Admin backup saved for deleteUser');
+      }
+      
       const response = await api.delete(`/api/admin/users/${userId}`);
+      console.log('✅ Delete user response:', response.data);
+      
+      // 🔴 VRATI ADMINOVE PODATKE AKO JE BIO ADMIN
+      if (isCurrentUserAdmin && adminBackup) {
+        setTimeout(() => {
+          console.log('🛡️ Restoring admin data after deleteUser');
+          authHelper.updateUserData(adminBackup);
+        }, 50);
+      }
+      
       return response.data;
     } catch (error) {
       console.error("❌ Greška pri brisanju korisnika:", error);
@@ -712,9 +998,77 @@ const adminAPI = {
     }
   },
 
+  // DODANO: toggleUserStatus metoda koristi PATCH
+  async toggleUserStatus(userId, status) {
+    try {
+      console.log('📤 ADMIN API: Changing user status ID:', userId, 'to:', status);
+      
+      const currentUser = authHelper.getUser();
+      const isCurrentUserAdmin = currentUser?.role === 'admin';
+      let adminBackup = null;
+      
+      if (isCurrentUserAdmin) {
+        adminBackup = {
+          role: currentUser.role,
+          requires_password_change: currentUser.requires_password_change,
+          email: currentUser.email,
+          display_name: currentUser.display_name
+        };
+        console.log('💾 Admin backup saved for toggleUserStatus');
+      }
+      
+      const response = await api.patch(`/api/admin/users/${userId}`, {
+        status: status
+      });
+      
+      // 🔴 VRATI ADMINOVE PODATKE AKO JE BIO ADMIN
+      if (isCurrentUserAdmin && adminBackup) {
+        setTimeout(() => {
+          console.log('🛡️ Restoring admin data after toggleUserStatus');
+          authHelper.updateUserData(adminBackup);
+        }, 50);
+      }
+      
+      console.log('✅ Toggle status response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error("❌ Greška pri promjeni statusa:", {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      throw error;
+    }
+  },
+
   async resendActivationEmail(userId) {
     try {
+      console.log('📧 Resending activation email for user:', userId);
+      
+      const currentUser = authHelper.getUser();
+      const isCurrentUserAdmin = currentUser?.role === 'admin';
+      let adminBackup = null;
+      
+      if (isCurrentUserAdmin) {
+        adminBackup = {
+          role: currentUser.role,
+          requires_password_change: currentUser.requires_password_change,
+          email: currentUser.email,
+          display_name: currentUser.display_name
+        };
+        console.log('💾 Admin backup saved for resendActivationEmail');
+      }
+      
       const response = await api.post(`/api/admin/users/${userId}/resend-activation`);
+      
+      // 🔴 VRATI ADMINOVE PODATKE AKO JE BIO ADMIN
+      if (isCurrentUserAdmin && adminBackup) {
+        setTimeout(() => {
+          console.log('🛡️ Restoring admin data after resendActivationEmail');
+          authHelper.updateUserData(adminBackup);
+        }, 50);
+      }
+      
       return response.data;
     } catch (error) {
       console.error("❌ Greška pri ponovnom slanju aktivacijskog emaila:", error);
@@ -722,7 +1076,7 @@ const adminAPI = {
     }
   },
 
-  // 🔴 NOVO: Alias funkcije za backward compatibility
+  // Alias funkcije za backward compatibility
   async resendActivation(userId) {
     console.log('📧 resendActivation (alias) called for user:', userId);
     return await this.resendActivationEmail(userId);
@@ -735,9 +1089,34 @@ const adminAPI = {
 
   async resetUserPassword(userId, sendEmail = false) {
     try {
+      console.log('🔧 Resetting password for user:', userId);
+      
+      const currentUser = authHelper.getUser();
+      const isCurrentUserAdmin = currentUser?.role === 'admin';
+      let adminBackup = null;
+      
+      if (isCurrentUserAdmin) {
+        adminBackup = {
+          role: currentUser.role,
+          requires_password_change: currentUser.requires_password_change,
+          email: currentUser.email,
+          display_name: currentUser.display_name
+        };
+        console.log('💾 Admin backup saved for resetUserPassword');
+      }
+      
       const response = await api.post(`/api/admin/users/${userId}/reset-password`, {
         send_email: sendEmail
       });
+      
+      // 🔴 VRATI ADMINOVE PODATKE AKO JE BIO ADMIN
+      if (isCurrentUserAdmin && adminBackup) {
+        setTimeout(() => {
+          console.log('🛡️ Restoring admin data after resetUserPassword');
+          authHelper.updateUserData(adminBackup);
+        }, 50);
+      }
+      
       return response.data;
     } catch (error) {
       console.error("❌ Greška pri resetovanju lozinke:", error);
@@ -745,32 +1124,79 @@ const adminAPI = {
     }
   },
 
-  async toggleUserStatus(userId, status) {
+  // Zaštićena metoda za kreiranje korisnika koja nikad ne mijenja admin podatke
+  async createUserProtected(userData) {
     try {
-      console.log('📤 ADMIN API: Promjena statusa korisnika ID:', userId, 'na status:', status);
+      console.log('🛡️ Protected user creation for admin');
       
-      const response = await api.patch(`/api/admin/users/${userId}`, {
-        status: status
-      });
+      // Spremi trenutne admin podatke
+      const currentUser = authHelper.getUser();
+      const adminBackup = {
+        role: currentUser?.role,
+        requires_password_change: currentUser?.requires_password_change,
+        email: currentUser?.email,
+        first_name: currentUser?.first_name,
+        last_name: currentUser?.last_name
+      };
       
-      console.log('✅ ADMIN API: Odgovor servera:', response.data);
+      console.log('💾 Admin backup data:', adminBackup);
+      
+      const response = await api.post('/api/admin/users', userData);
+      
+      // 🔴 VAŽNO: Vrati admin podatke
+      setTimeout(() => {
+        console.log('👑 Restoring admin auth data');
+        authHelper.updateUserData({
+          ...adminBackup,
+          requires_password_change: false
+        });
+      }, 50);
+      
       return response.data;
     } catch (error) {
-      console.error("❌ Greška pri promjeni statusa korisnika:", {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
+      console.error('❌ Protected user creation error:', error);
+      throw error;
+    }
+  },
+
+  // Ultra-zaštićena metoda koja koristi axios direktno bez interceptora
+  async createUserSuperProtected(userData) {
+    try {
+      console.log('🛡️ SUPER Protected user creation for admin');
       
-      const apiError = new Error(
-        error.response?.data?.error || 
-        error.response?.data?.message || 
-        error.message || 
-        'Došlo je do greške pri promjeni statusa korisnika'
-      );
+      // Spremi admin podatke prije svega
+      const currentUser = authHelper.getUser();
+      const isAdmin = currentUser?.role === 'admin';
       
-      apiError.response = error.response;
-      throw apiError;
+      if (isAdmin) {
+        // Spremi auth token
+        const originalToken = authHelper.getToken();
+        
+        // Napravi API poziv BEZ korištenja interceptora
+        const response = await axios({
+          method: 'post',
+          url: '/api/admin/users',
+          baseURL: getApiConfig().baseURL,
+          headers: {
+            'Authorization': `Bearer ${originalToken}`,
+            'Content-Type': 'application/json'
+          },
+          data: userData,
+          timeout: 10000
+        });
+        
+        console.log('✅ API response:', response.data);
+        
+        console.log('👑 Admin data NOT touched after user creation');
+        
+        return response.data;
+      } else {
+        // Ako nije admin, koristi normalnu metodu
+        return await this.createUser(userData);
+      }
+    } catch (error) {
+      console.error('❌ Super protected user creation error:', error);
+      throw error;
     }
   }
 };
@@ -784,15 +1210,15 @@ const authAPI = {
 
       if (response.data.success && response.data.token) {
         // Spremi auth podatke
-        authHelper.setAuth(response.data.token, response.data.user || { email: credentials.email });
+        const authSuccess = authHelper.setAuth(response.data.token, response.data.user || { email: credentials.email });
         
-        // Ako korisnik treba promijeniti lozinku, vrati poseban flag
-        if (response.data.requires_password_change || response.data.user?.requires_password_change) {
-          console.log("⚠️ AuthAPI: Korisnik treba promijeniti lozinku");
-          return {
-            ...response.data,
-            requires_password_change: true
-          };
+        if (authSuccess) {
+          // Ako korisnik treba promijeniti lozinku, vrati poseban flag
+          if (response.data.requires_password_change || response.data.user?.requires_password_change) {
+            console.log("⚠️ AuthAPI: Korisnik treba promijeniti lozinku");
+            response.data.requires_password_change = true;
+            authHelper.setPasswordChangeInProgress(true);
+          }
         }
       }
 
@@ -815,11 +1241,14 @@ const authAPI = {
 
   async changePassword(passwordData) {
     try {
+      console.log("🔐 AuthAPI: Changing password...");
       const response = await api.post("/api/auth/change-password", passwordData);
       
       if (response.data.success) {
+        console.log("✅ Password changed successfully");
         // Oznaci da je lozinka promijenjena
         authHelper.markPasswordChanged();
+        authHelper.setPasswordChangeInProgress(false);
       }
       
       return response.data;
@@ -831,11 +1260,15 @@ const authAPI = {
 
   async forceChangePassword(passwordData) {
     try {
+      console.log("🔐 AuthAPI: Force changing password...");
       const response = await api.post("/api/auth/force-change-password", passwordData);
       
       if (response.data.success) {
+        console.log("✅ Force password change successful");
         // Oznaci da je lozinka promijenjena
         authHelper.markPasswordChanged();
+        authHelper.markPasswordChangeCompleted();
+        authHelper.setPasswordChangeInProgress(false);
         
         // Ažuriraj token ako je novi token vraćen
         if (response.data.token) {
@@ -863,17 +1296,25 @@ const authAPI = {
 
   async activateAccount(token, email) {
     try {
+      console.log("🔐 AuthAPI: Activating account with token:", token);
       const response = await api.get(`/api/auth/activate/${token}`, {
         params: { email: email },
       });
 
       // Ako backend vraća token, spremimo ga
       if (response.data.success && response.data.token) {
-        authHelper.setAuth(response.data.token, response.data.user);
+        const authSuccess = authHelper.setAuth(response.data.token, response.data.user);
         
-        // Ako korisnik treba promijeniti lozinku, vrati poseban flag
-        if (response.data.user?.requires_password_change === true || response.data.requires_password_change === true) {
-          response.data.requires_password_change = true;
+        if (authSuccess) {
+          // Ako korisnik treba promijeniti lozinku, postavi flag
+          if (response.data.user?.requires_password_change === true || response.data.requires_password_change === true) {
+            console.log("🔐 User needs password change after activation");
+            response.data.requires_password_change = true;
+            authHelper.setPasswordChangeInProgress(true);
+            
+            // Očisti password change completed flag ako postoji
+            localStorage.removeItem('password_change_completed');
+          }
         }
       }
 
@@ -996,6 +1437,15 @@ if (typeof window !== "undefined") {
     console.log("🚀 Initializing auth on app startup");
     authHelper.initializeAuth();
     
+    // Provjeri da li treba redirectati na change-password
+    if (authHelper.checkPasswordChangeRedirect() && 
+        !authHelper.isPasswordChangeRedirectInProgress()) {
+      console.log('🔐 Auth initialization: Password change required, redirecting...');
+      setTimeout(() => {
+        window.location.href = '/change-password?required=true&from_auth_init=true';
+      }, 500);
+    }
+    
     // Debug funkcije
     window.listAdminMethods = () => {
       console.log('🔧 Available adminAPI methods:');
@@ -1012,11 +1462,48 @@ if (typeof window !== "undefined") {
       console.log("🎯 Generated display name:", authInfo.user?.display_name);
       console.log("🔧 adminAPI methods:", Object.keys(adminAPI));
       console.log("🔄 pendingRedirect:", localStorage.getItem("pendingRedirect"));
+      console.log("🔐 password_change_in_progress:", localStorage.getItem("password_change_in_progress"));
+      console.log("✅ password_change_completed:", localStorage.getItem("password_change_completed"));
+      console.log("🔄 redirecting_for_password_change:", localStorage.getItem("redirecting_for_password_change"));
+    };
+    
+    // Test funkcije za password change flow
+    window.testPasswordChangeFlow = () => {
+      console.log('🧪 Testing password change flow...');
+      
+      // Simuliraj usera koji treba promijeniti lozinku
+      const testToken = 'test-token-' + Date.now();
+      const testUser = {
+        email: 'test@example.com',
+        role: 'user',
+        requires_password_change: true
+      };
+      
+      authHelper.setAuth(testToken, testUser);
+      console.log('✅ Test user created with password change required');
+      console.log('🔐 User state:', authHelper.getUser());
+      
+      // Redirect na change-password
+      setTimeout(() => {
+        window.location.href = '/change-password?required=true&initial_setup=true';
+      }, 1000);
+    };
+    
+    window.clearPasswordChangeFlags = () => {
+      console.log('🧹 Clearing all password change flags...');
+      authHelper.setRequiresPasswordChange(false);
+      authHelper.setPasswordChangeInProgress(false);
+      authHelper.setPasswordChangeRedirectInProgress(false);
+      localStorage.removeItem('password_change_completed');
+      localStorage.removeItem('pendingRedirect');
+      console.log('✅ All password change flags cleared');
     };
     
     console.log("🔧 Debug commands available:");
     console.log("  listAdminMethods() - List all adminAPI methods");
     console.log("  debugAuth() - Show auth state");
+    console.log("  testPasswordChangeFlow() - Test password change flow");
+    console.log("  clearPasswordChangeFlags() - Clear all password change flags");
     console.log("  adminAPI.resendActivation() - Alias for resendActivationEmail");
     console.log("  adminAPI.resendVerificationEmail() - Alias for resendActivationEmail");
     

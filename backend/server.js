@@ -14,7 +14,7 @@ console.log('📧 EmailService status:', {
   available: !!emailService,
   hasTransporter: emailService?.transporter ? 'YES' : 'NO',
   hasActivationEmail: typeof emailService?.sendActivationEmail === 'function',
-  hasPasswordResetEmail: typeof emailService?.sendPasswordResetEmail === 'function'
+  hasPasswordResetEmail: typeof emailService?.sendPasswordResetEmailSimple === 'function'
 });
 
 const app = express();
@@ -162,6 +162,302 @@ const generateSecurePassword = () => {
     .map(byte => chars[byte % chars.length])
     .join('');
 };
+
+// ============ REQUEST PASSWORD RESET (FORGOT PASSWORD) - POPRAVLJENO ============
+app.post("/api/auth/request-password-reset", async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email je obavezan"
+      });
+    }
+    
+    console.log("🔐 Forgot password request for:", email);
+    
+    // Pronađi korisnika
+    const userResult = await client.query(
+      `SELECT id, email, first_name, last_name, full_name, 
+              email_verified, status
+       FROM users WHERE email = $1`,
+      [email]
+    );
+    
+    // Uvijek vraćaj success (security by obscurity)
+    if (userResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      console.log('ℹ️ User not found, returning generic message');
+      return res.json({
+        success: true,
+        message: "Ako email postoji, poslat ćemo reset link"
+      });
+    }
+    
+    const user = userResult.rows[0];
+    
+    // Provjeri da li je korisnik aktivan
+    if (user.status !== 'active') {
+      await client.query('ROLLBACK');
+      console.log('❌ User not active:', user.status);
+      return res.status(400).json({
+        success: false,
+        message: "Račun nije aktivan"
+      });
+    }
+    
+    // Provjeri da li je email verificirani
+    if (!user.email_verified) {
+      await client.query('ROLLBACK');
+      console.log('❌ Email not verified');
+      return res.status(400).json({
+        success: false,
+        message: "Email nije verifikovan"
+      });
+    }
+    
+    // Generiraj reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 sat
+    
+    // Obriši stare reset tokene
+    await client.query(
+      'DELETE FROM verification_tokens WHERE user_id = $1 AND token_type = $2',
+      [user.id, 'password_reset']
+    );
+    
+    // Spremi novi token
+    await client.query(
+      `INSERT INTO verification_tokens (user_id, token, token_type, expires_at)
+       VALUES ($1, $2, $3, $4)`,
+      [user.id, resetToken, 'password_reset', expiresAt]
+    );
+    
+    // 🔴 KLJUČNA PROMJENA: Pozovi email servis s PRAVIM tokenom
+    let emailSent = false;
+    let emailError = null;
+    
+    try {
+      if (emailService && emailService.sendPasswordResetEmailSimple) {
+        console.log(`📧 Pozivanje email servisa s tokenom: ${resetToken.substring(0, 15)}...`);
+        emailSent = await emailService.sendPasswordResetEmailSimple(
+          user.email,
+          resetToken,  // ← PRAVI TOKEN IZ BAZE
+          user.full_name || user.first_name || 'Korisnik'
+        );
+        console.log(`📧 Password reset email sent to ${user.email}:`, emailSent ? 'Success' : 'Failed');
+      } else {
+        console.log('📧 Email service not available. Reset token:', resetToken);
+        // Za development, možemo vratiti token u response
+        emailSent = false;
+        emailError = 'Email servis nije konfigurisan';
+      }
+    } catch (emailErr) {
+      console.error('❌ Error sending password reset email:', emailErr);
+      emailError = emailErr.message;
+    }
+    
+    await client.query('COMMIT');
+    
+    console.log('✅ Password reset token generated for:', user.email);
+    console.log('🔐 Actual token saved to DB:', resetToken);  // ← BITNO ZA DEBUG
+    
+    const response = {
+      success: true,
+      message: emailSent 
+        ? "Link za reset lozinke je poslan na vaš email" 
+        : "Reset token generiran" + (emailError ? ` (${emailError})` : ''),
+      email_sent: emailSent,
+      // 🔴 VAŽNO: Vrati token samo u development modu za debug
+      ...(process.env.NODE_ENV === 'development' && { 
+        debug_token: resetToken,  // ← Token iz baze
+        debug_reset_link: `http://localhost:5173/change-password?token=${resetToken}`
+      })
+    };
+    
+    res.json(response);
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Forgot password error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Greška pri slanju reset linka"
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// ============ VERIFY PASSWORD RESET TOKEN ============
+app.get("/api/auth/verify-reset-token/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    console.log("🔐 Verifying reset token:", token.substring(0, 20) + "...");
+    
+    const result = await pool.query(
+      `SELECT vt.*, u.id as user_id, u.email, u.status, u.email_verified,
+              u.first_name, u.last_name, u.full_name
+       FROM verification_tokens vt
+       JOIN users u ON vt.user_id = u.id
+       WHERE vt.token = $1 
+         AND vt.token_type = 'password_reset'
+         AND vt.used = false
+         AND vt.expires_at > NOW()`,
+      [token]
+    );
+    
+    if (result.rows.length === 0) {
+      console.log('❌ Invalid or expired reset token');
+      return res.status(400).json({
+        success: false,
+        valid: false,
+        message: "Reset token je istekao ili je nevažeći"
+      });
+    }
+    
+    const tokenData = result.rows[0];
+    
+    // Provjeri da li je korisnik aktivan
+    if (tokenData.status !== 'active') {
+      return res.status(400).json({
+        success: false,
+        valid: false,
+        message: "Račun nije aktivan"
+      });
+    }
+    
+    console.log('✅ Valid reset token for user:', tokenData.email);
+    
+    res.json({
+      success: true,
+      valid: true,
+      token: token,
+      user: {
+        id: tokenData.user_id,
+        email: tokenData.email,
+        first_name: tokenData.first_name,
+        last_name: tokenData.last_name,
+        full_name: tokenData.full_name
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Verify reset token error:', error);
+    res.status(500).json({
+      success: false,
+      valid: false,
+      message: "Greška pri verifikaciji tokena"
+    });
+  }
+});
+
+// ============ RESET PASSWORD WITH TOKEN ============
+app.post("/api/auth/reset-password", async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    const { token, new_password } = req.body;
+    
+    if (!token || !new_password) {
+      return res.status(400).json({
+        success: false,
+        message: "Token i nova lozinka su obavezni"
+      });
+    }
+    
+    if (new_password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Lozinka mora imati najmanje 8 karaktera"
+      });
+    }
+    
+    console.log("🔐 Resetting password with token:", token.substring(0, 20) + "...");
+    
+    // Provjeri token
+    const tokenResult = await client.query(
+      `SELECT vt.*, u.id as user_id, u.email, u.status
+       FROM verification_tokens vt
+       JOIN users u ON vt.user_id = u.id
+       WHERE vt.token = $1 
+         AND vt.token_type = 'password_reset'
+         AND vt.used = false
+         AND vt.expires_at > NOW()`,
+      [token]
+    );
+    
+    if (tokenResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      console.log('❌ Invalid reset token');
+      return res.status(400).json({
+        success: false,
+        message: "Reset token je istekao ili je nevažeći"
+      });
+    }
+    
+    const tokenData = tokenResult.rows[0];
+    
+    // Hash novu lozinku
+    const hashedPassword = await bcrypt.hash(new_password, 10);
+    
+    // Ažuriraj lozinku
+    await client.query(
+      `UPDATE users SET 
+        password_hash = $1,
+        requires_password_change = false,
+        password_changed_at = NOW(),
+        updated_at = NOW()
+       WHERE id = $2`,
+      [hashedPassword, tokenData.user_id]
+    );
+    
+    // Označi token kao iskorišten
+    await client.query(
+      `UPDATE verification_tokens SET 
+        used = true,
+        used_at = NOW()
+       WHERE id = $1`,
+      [tokenData.id]
+    );
+    
+    // Obriši sve ostale reset tokene za ovog korisnika
+    await client.query(
+      `DELETE FROM verification_tokens 
+       WHERE user_id = $1 
+         AND token_type = 'password_reset'
+         AND id != $2`,
+      [tokenData.user_id, tokenData.id]
+    );
+    
+    await client.query('COMMIT');
+    
+    console.log(`✅ Password reset successful for user: ${tokenData.email}`);
+    
+    res.json({
+      success: true,
+      message: "Lozinka je uspješno resetovana. Sada se možete prijaviti sa novom lozinkom."
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Reset password error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Greška pri resetovanju lozinke"
+    });
+  } finally {
+    client.release();
+  }
+});
 
 // ============ VERIFY EMAIL TOKEN ENDPOINT ============
 app.get("/api/auth/verify/:token", async (req, res) => {
@@ -575,6 +871,36 @@ app.post("/api/auth/resend-verification", async (req, res) => {
     });
   } finally {
     client.release();
+  }
+});
+
+// ============ DEBUG: TEST TOKEN VERIFICATION ============
+app.get("/api/auth/debug-verify/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    console.log("🔍 DEBUG: Verifikacija tokena:", token);
+    
+    // Provjeri u bazi
+    const result = await pool.query(
+      `SELECT vt.*, u.email, u.status, u.first_name
+       FROM verification_tokens vt
+       JOIN users u ON vt.user_id = u.id
+       WHERE vt.token = $1 AND vt.token_type = 'password_reset'`,
+      [token]
+    );
+    
+    res.json({
+      token: token,
+      exists_in_db: result.rows.length > 0,
+      details: result.rows[0] || null,
+      token_length: token.length,
+      token_sample: token.substring(0, 20) + '...'
+    });
+    
+  } catch (error) {
+    console.error('❌ Debug error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -1722,6 +2048,231 @@ app.post(
   }
 );
 
+// DELETE USER
+app.delete(
+  "/api/admin/users/:id",
+  authenticateToken,
+  requireRole(['admin']),
+  async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+
+      const userId = req.params.id;
+      const requestingAdminId = req.user.id;
+      
+      console.log('🗑️ Deleting user ID:', userId, 'by admin:', requestingAdminId);
+
+      // 1. Provjeri da li korisnik postoji
+      const userCheck = await client.query(
+        `SELECT id, email, role, status FROM users WHERE id = $1`,
+        [userId]
+      );
+
+      if (userCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          error: 'Korisnik nije pronađen'
+        });
+      }
+
+      const user = userCheck.rows[0];
+
+      // 2. Provjeri da li se pokušava obrisati admin
+      if (user.role === 'admin') {
+        await client.query('ROLLBACK');
+        return res.status(403).json({
+          success: false,
+          error: 'Ne možete obrisati administratora'
+        });
+      }
+
+      // 3. Provjeri da li se admin pokušava obrisati samog sebe
+      if (parseInt(userId) === requestingAdminId) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({
+          success: false,
+          error: 'Ne možete obrisati vlastiti račun'
+        });
+      }
+
+      // 4. SOFT DELETE pristup: Označi korisnika kao obrisanog
+      // (Umjesto fizičkog brisanja, mijenjamo status)
+      // const result = await client.query(
+      //   `UPDATE users SET 
+      //     status = 'deleted',
+      //     email = $1,
+      //     username = $2,
+      //     is_deleted = true,
+      //     deleted_at = NOW(),
+      //     deleted_by = $3,
+      //     updated_at = NOW()
+      //    WHERE id = $4
+      //    RETURNING id, email, status, deleted_at`,
+      //   [
+      //     `deleted_${user.email}_${Date.now()}`, // maskiraj email
+      //     `deleted_${user.id}_${Date.now()}`,    // maskiraj username
+      //     requestingAdminId,
+      //     userId
+      //   ]
+      // );
+
+      // 5. Alternativno: FIZIČKO BRISANJE (ako želite)
+      // Komentirajte soft delete gore i odkomentirajte ovu liniju:
+      const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id, email', [userId]);
+
+      const deletedUser = result.rows[0];
+
+      // 6. Obriši sve verification tokene za ovog korisnika
+      await client.query(
+        'DELETE FROM verification_tokens WHERE user_id = $1',
+        [userId]
+      );
+
+      await client.query('COMMIT');
+
+      console.log('✅ User deleted successfully:', {
+        id: deletedUser.id,
+        original_email: user.email,
+        status: deletedUser.status,
+        deleted_at: deletedUser.deleted_at
+      });
+
+      res.json({
+        success: true,
+        message: 'Korisnik je uspješno obrisan',
+        user: {
+          id: deletedUser.id,
+          original_email: user.email,
+          status: deletedUser.status,
+          deleted_at: deletedUser.deleted_at
+        }
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Delete user error:', error);
+      
+      // Specifične poruke za greške
+      let errorMessage = 'Greška pri brisanju korisnika';
+      
+      if (error.message.includes('foreign key constraint')) {
+        errorMessage = 'Korisnik ima povezane podatke (klijenti, bilješke) i ne može biti obrisan';
+      }
+      
+      res.status(500).json({
+        success: false,
+        error: errorMessage + ': ' + error.message
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// PATCH USER (parcijalni update)
+app.patch(
+  "/api/admin/users/:id",
+  authenticateToken,
+  requireRole(['admin']),
+  async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+
+      const userId = req.params.id;
+      
+      console.log('🔧 Patching user ID:', userId, 'with data:', req.body);
+
+      // Provjeri da li korisnik postoji
+      const userCheck = await client.query(
+        "SELECT id FROM users WHERE id = $1",
+        [userId]
+      );
+
+      if (userCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          error: 'Korisnik nije pronađen'
+        });
+      }
+
+      // Dinamički buildanje update query-ja
+      const updateFields = [];
+      const updateValues = [];
+      let paramIndex = 1;
+
+      // Prođi kroz sve polja u request body-ju
+      Object.entries(req.body).forEach(([key, value]) => {
+        // Provjeri da li polje postoji u users tabeli (dodaj validaciju prema vašoj shemi)
+        const allowedFields = [
+          'first_name', 'last_name', 'email', 'phone_mobile', 'phone_office',
+          'company', 'address', 'department', 'role', 'auth_method',
+          'status', 'email_verified', 'can_export', 'can_manage_clients',
+          'can_view_reports', 'notes', 'requires_password_change'
+        ];
+        
+        if (allowedFields.includes(key)) {
+          updateFields.push(`${key} = $${paramIndex++}`);
+          updateValues.push(value);
+        }
+      });
+
+      // Dodaj updated_at
+      updateFields.push(`updated_at = NOW()`);
+
+      if (updateFields.length === 1) { // Samo updated_at
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          error: 'Nema podataka za ažuriranje'
+        });
+      }
+
+      // Izvrši update
+      updateValues.push(userId);
+      
+      const updateQuery = `
+        UPDATE users 
+        SET ${updateFields.join(', ')}
+        WHERE id = $${paramIndex}
+        RETURNING *
+      `;
+
+      const result = await client.query(updateQuery, updateValues);
+      const updatedUser = result.rows[0];
+
+      await client.query('COMMIT');
+
+      console.log("✅ User patched successfully:", {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        fields_updated: updateFields.length - 1 // minus updated_at
+      });
+
+      res.json({
+        success: true,
+        message: 'Korisnik uspješno ažuriran',
+        user: updatedUser
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Patch user error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Greška pri ažuriranju korisnika: ' + error.message
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 // ============ CLIENTS ENDPOINTS ============
 app.get("/api/clients", authenticateToken, async (req, res) => {
   try {
@@ -2027,6 +2578,73 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
+// ============ TEST PASSWORD RESET FLOW ============
+app.get("/api/auth/test-reset-flow", async (req, res) => {
+  try {
+    // Pronađi korisnika za test
+    const userResult = await pool.query(
+      "SELECT id, email, first_name FROM users WHERE status = 'active' LIMIT 1"
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Nema aktivnih korisnika za test"
+      });
+    }
+    
+    const user = userResult.rows[0];
+    
+    // Generiraj token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 1 * 60 * 60 * 1000);
+    
+    // Obriši stare tokene
+    await pool.query(
+      'DELETE FROM verification_tokens WHERE user_id = $1 AND token_type = $2',
+      [user.id, 'password_reset']
+    );
+    
+    // Spremi novi token
+    await pool.query(
+      `INSERT INTO verification_tokens (user_id, token, token_type, expires_at)
+       VALUES ($1, $2, $3, $4)`,
+      [user.id, resetToken, 'password_reset', expiresAt]
+    );
+    
+    const testData = {
+      success: true,
+      message: "Test token generiran",
+      test_user: {
+        id: user.id,
+        email: user.email,
+        name: user.first_name
+      },
+      token: resetToken,
+      endpoints: {
+        verify_token: `http://localhost:8888/api/auth/verify-reset-token/${resetToken}`,
+        debug_verify: `http://localhost:8888/api/auth/debug-verify/${resetToken}`,
+        frontend_link: `http://localhost:5173/change-password?token=${resetToken}`,
+        reset_password: `http://localhost:8888/api/auth/reset-password (POST sa token i new_password)`
+      },
+      instructions: [
+        "1. Kopiraj token i testiraj verify endpoint",
+        "2. Koristi frontend link za ručno testiranje",
+        "3. Testiraj reset password sa tokenom"
+      ]
+    };
+    
+    res.json(testData);
+    
+  } catch (error) {
+    console.error('❌ Test reset flow error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Greška pri testiranju reset flow-a"
+    });
+  }
+});
+
 // ============ START SERVER ============
 const PORT = 8888;
 app.listen(PORT, () => {
@@ -2045,17 +2663,23 @@ app.listen(PORT, () => {
   console.log("   ✅ Secure password hashing");
   console.log("   ✅ Admin password reset");
   console.log("   ✅ Unique username generation");
-  console.log("\n🔑 PASSWORD CHANGE FLOW IMPROVEMENTS:");
-  console.log("   ✅ Activation endpoint returns JSON with requires_password_change flag");
-  console.log("   ✅ Login endpoint returns 403 with requires_password_change flag");
-  console.log("   ✅ Force password change endpoint clears requires_password_change flag");
-  console.log("   ✅ Backend properly tracks requires_password_change status");
+  console.log("\n🔑 PASSWORD RESET FLOW (POPRAVLJENO):");
+  console.log("   ✅ POST /api/auth/request-password-reset - Request reset link");
+  console.log("   ✅ GET /api/auth/verify-reset-token/:token - Verify reset token");
+  console.log("   ✅ POST /api/auth/reset-password - Reset password with token");
+  console.log("   🔗 Email servis šalje PRAVI token iz baze");
+  console.log("\n🛠️ DEBUG ENDPOINTS:");
+  console.log("   GET  /api/auth/debug-verify/:token - Debug token info");
+  console.log("   GET  /api/auth/test-reset-flow - Test reset flow");
   console.log("\n📋 Available endpoints:");
-  console.log("   GET    /api/auth/verify/:token (NOW WITH REDIRECT!)");
-  console.log("   GET    /api/auth/activate/:token (existing - for activation)");
-  console.log("   POST   /api/auth/resend-verification (NEW)");
+  console.log("   POST   /api/auth/request-password-reset (FORGOT PASSWORD)");
+  console.log("   GET    /api/auth/verify-reset-token/:token");
+  console.log("   POST   /api/auth/reset-password");
+  console.log("   GET    /api/auth/verify/:token");
+  console.log("   GET    /api/auth/activate/:token");
+  console.log("   POST   /api/auth/resend-verification");
   console.log("   POST   /api/auth/login");
-  console.log("   GET    /api/auth/verify (for token verification)");
+  console.log("   GET    /api/auth/verify");
   console.log("   POST   /api/auth/change-password");
   console.log("   POST   /api/auth/force-change-password");
   console.log("   GET    /api/clients");
@@ -2063,15 +2687,22 @@ app.listen(PORT, () => {
   console.log("   GET    /api/notes");
   console.log("   POST   /api/notes");
   console.log("   GET    /api/admin/users");
-  console.log("   POST   /api/admin/users (with password generation)");
+  console.log("   POST   /api/admin/users");
   console.log("   PUT    /api/admin/users/:id");
+  console.log("   PATCH  /api/admin/users/:id");
+  console.log("   DELETE /api/admin/users/:id");
   console.log("   POST   /api/admin/users/:id/resend-activation");
   console.log("   POST   /api/admin/users/:id/reset-password");
   console.log("   GET    /api/health");
-  console.log("\n👤 REDIRECT FLOW:");
-  console.log("   1. User clicks email link → /api/auth/verify/:token");
-  console.log("   2. Backend verifies token → redirects to frontend");
-  console.log("   3. Frontend receives JWT token → redirects to password change");
-  console.log("\n🔗 Email links now use: http://localhost:8888/api/auth/verify/:token");
+  console.log("\n👤 PASSWORD RESET FLOW:");
+  console.log("   1. User clicks 'Forgot Password'");
+  console.log("   2. Enters email → POST /api/auth/request-password-reset");
+  console.log("   3. Generira se token i sprema u bazu");
+  console.log("   4. Email servis šalje email s PRAVIM tokenom");
+  console.log("   5. User klikne link → Frontend /change-password?token=xxx");
+  console.log("   6. Frontend poziva → GET /api/auth/verify-reset-token/:token");
+  console.log("   7. Unosi novu lozinku → POST /api/auth/reset-password");
+  console.log("   8. Password reset complete → Redirect to login");
+  console.log("\n🔗 Frontend reset link: http://localhost:5173/change-password?token=xxx");
   console.log("=================================\n");
 });

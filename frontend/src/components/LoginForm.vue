@@ -33,6 +33,65 @@
       </div>
     </div>
 
+    <!-- Forgot Password Modal -->
+    <div v-if="showForgotPassword" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div class="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold text-gray-800">Resetiraj lozinku</h3>
+          <button @click="closeForgotPassword" 
+                  class="text-gray-500 hover:text-gray-700 text-xl">
+            &times;
+          </button>
+        </div>
+        
+        <div v-if="!resetEmailSent">
+          <p class="mb-4 text-gray-600">Unesite email adresu vašeg računa. Poslat ćemo vam link za resetovanje lozinke.</p>
+          
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Email adresa</label>
+            <input v-model="resetEmail" type="email" placeholder="vas@email.com" 
+                   :class="[
+                     'w-full border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500',
+                     resetEmailError ? 'border-red-300 ring-1 ring-red-300' : 'border-gray-300'
+                   ]"
+                   @input="resetEmailError = ''">
+            <p v-if="resetEmailError" class="text-red-500 text-xs mt-1 flex items-center">
+              <span class="mr-1">⚠️</span>{{ resetEmailError }}
+            </p>
+          </div>
+          
+          <div class="flex gap-2">
+            <button @click="sendResetEmail" 
+                    :disabled="!resetEmail || sendingResetEmail"
+                    class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center">
+              <span v-if="sendingResetEmail" class="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></span>
+              {{ sendingResetEmail ? 'Slanje...' : 'Pošalji reset link' }}
+            </button>
+            <button @click="closeForgotPassword"
+                    class="flex-1 border border-gray-300 px-4 py-2 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-all duration-200">
+              Otkaži
+            </button>
+          </div>
+        </div>
+        
+        <div v-else>
+          <div class="text-center">
+            <div class="text-green-500 text-4xl mb-3">✅</div>
+            <h4 class="text-lg font-semibold text-gray-800 mb-2">Email je poslan!</h4>
+            <p class="text-gray-600 mb-4">
+              Link za resetovanje lozinke je poslan na <strong class="text-blue-600">{{ resetEmail }}</strong>.
+              Provjerite svoj inbox.
+            </p>
+            <button @click="closeForgotPassword"
+                    class="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200">
+              U redu
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Login Form -->
     <form @submit.prevent="handleLogin" class="space-y-4">
       <!-- Email Field -->
       <div>
@@ -48,7 +107,13 @@
 
       <!-- Password Field -->
       <div>
-        <label for="loginPassword" class="block text-sm font-medium text-gray-700 mb-1">Lozinka</label>
+        <div class="flex justify-between items-center mb-1">
+          <label for="loginPassword" class="block text-sm font-medium text-gray-700">Lozinka</label>
+          <button type="button" @click="showForgotPassword = true"
+                  class="text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors duration-200">
+            Zaboravili ste lozinku?
+          </button>
+        </div>
         <div class="relative">
           <input id="loginPassword" name="password" v-model="loginData.password"
             :type="showPassword ? 'text' : 'password'" placeholder="Unesite lozinku" autocomplete="current-password"
@@ -171,6 +236,13 @@ const loginData = reactive({
   email: 'admin@crm.com',
   password: 'password123'
 })
+
+// Forgot Password state
+const showForgotPassword = ref(false)
+const resetEmail = ref('')
+const resetEmailSent = ref(false)
+const sendingResetEmail = ref(false)
+const resetEmailError = ref('')
 
 // Demo korisnici
 const demoUsers = [
@@ -305,6 +377,69 @@ const resendVerificationEmail = async () => {
     showMessage('Greška pri slanju verifikacijskog emaila: ' + (error.response?.data?.message || error.message), 'error')
   } finally {
     resendingVerification.value = false
+  }
+}
+
+// Forgot Password Methods
+const closeForgotPassword = () => {
+  showForgotPassword.value = false
+  resetEmailSent.value = false
+  resetEmail.value = ''
+  resetEmailError.value = ''
+  sendingResetEmail.value = false
+}
+
+const validateResetEmail = () => {
+  if (!resetEmail.value.trim()) {
+    resetEmailError.value = 'Email je obavezan'
+    return false
+  }
+  
+  if (!/\S+@\S+\.\S+/.test(resetEmail.value)) {
+    resetEmailError.value = 'Email nije ispravan'
+    return false
+  }
+  
+  return true
+}
+
+const sendResetEmail = async () => {
+  if (!validateResetEmail()) return
+  
+  try {
+    sendingResetEmail.value = true
+    
+    // Koristite postojeći authAPI (dodajte metodu requestPasswordReset)
+    const response = await api.post('/api/auth/request-password-reset', { 
+      email: resetEmail.value 
+    })
+    
+    console.log('📧 Reset email response:', response.data)
+    
+    if (response.data.success) {
+      resetEmailSent.value = true
+      // Prikaži poruku u glavnom view-u
+      showMessage(response.data.message || 'Email za resetovanje lozinke je poslan!', 'success')
+    } else {
+      resetEmailError.value = response.data.message || 'Greška pri slanju email-a'
+    }
+  } catch (error) {
+    console.error('❌ Error sending reset email:', error)
+    
+    // Prijateljske poruke za različite greške
+    if (error.response?.status === 404 || error.response?.status === 400) {
+      resetEmailError.value = 'Korisnik s ovim emailom nije pronađen'
+    } else if (error.response?.data?.message) {
+      resetEmailError.value = error.response.data.message
+    } else if (error.code === 'NETWORK_ERROR' || !error.response) {
+      resetEmailError.value = 'Problem s mrežnom vezom'
+      showMessage('Problem s mrežnom vezom. Provjerite internetsku vezu.', 'error')
+    } else {
+      resetEmailError.value = 'Greška pri slanju email-a. Pokušajte ponovno.'
+      showMessage('Greška pri slanju email-a za resetovanje lozinke.', 'error')
+    }
+  } finally {
+    sendingResetEmail.value = false
   }
 }
 
@@ -481,6 +616,10 @@ defineExpose({
     loginData.email = email
     loginData.password = password
     showMessage(`Podaci za ${email} su postavljeni!`, 'success')
+  },
+
+  showForgotPasswordDialog: () => {
+    showForgotPassword.value = true
   }
 })
 </script>
@@ -523,5 +662,34 @@ button:focus {
   outline: 2px solid #3b82f6;
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Forgot Password modal animations */
+.fixed {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.bg-white.rounded-lg {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 </style>
